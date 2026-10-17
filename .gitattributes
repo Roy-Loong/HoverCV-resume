@@ -1,0 +1,2 @@
+# Preserve Windows batch line endings in GitHub source archives.
+*.bat -text whitespace=cr-at-eol

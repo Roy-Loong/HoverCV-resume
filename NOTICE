@@ -1,0 +1,21 @@
+HoverCV original code and fictional demonstration assets: MIT.
+Design references: VoltAgent/awesome-design-md (MIT), Notion and Linear analysis.
+https://github.com/VoltAgent/awesome-design-md
+The design reference was interpreted; no proprietary fonts, logos or photographs were copied.
+
+PDF rendering and the isolated app/pdf-text.css text-layer stylesheet: Mozilla PDF.js (Apache-2.0).
+https://github.com/mozilla/pdf.js
+Copyright 2012 Mozilla Foundation. Licensed under the Apache License, Version 2.0.
+http://www.apache.org/licenses/LICENSE-2.0
+PDF.js distributed workers, CMaps, standard fonts and wasm modules retain upstream license files under public/pdfjs after npm installation. See docs/THIRD_PARTY.md and package licenses.
+
+Lucide icons: ISC. https://lucide.dev/license
+Next.js, React, Floating UI, Zod, idb, JSZip, Better Auth, node-postgres, AWS SDK, pdf-lib: see exact packages and licenses in docs/THIRD_PARTY.md and package-lock.json.
+
+MinIO is a separately deployed, unmodified AGPL-3.0 service, not MIT code.
+Source used by deploy/Dockerfile.minio:
+https://github.com/minio/minio/tree/07c3a429bfed433e49018cb0f78a52145d4bedeb
+Its license is copied into the built image at /licenses/MinIO-LICENSE.
+PostgreSQL is a separate service under the PostgreSQL License.
+
+The sample resume, names, work history, school, project names and interface illustrations are fictional. They do not represent an actual applicant or real work history.

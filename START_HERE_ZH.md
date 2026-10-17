@@ -1,0 +1,53 @@
+# 在你的电脑测试 HoverCV
+
+## Windows 第一次使用：4 步
+
+**已经安装 Node.js v24，可以直接开始。** 未安装时才需要从 https://nodejs.org/zh-cn/download 安装 Node.js 24 或更新版本，保留默认选项。
+
+1. **下载项目。** 点击 [下载 HoverCV 源码 ZIP](https://github.com/Roy-Loong/HoverCV-resume/archive/refs/heads/main.zip)。若没有开始下载，打开 [GitHub 仓库](https://github.com/Roy-Loong/HoverCV-resume)，点击绿色 **Code → Download ZIP**；私人仓库需要先登录有权限的 GitHub 账户。
+2. **解压文件。** 在“下载”文件夹找到 `HoverCV-resume-main.zip`，右键 → **全部解压缩** → **提取**。打开解压后的 `HoverCV-resume-main` 文件夹，确认其中有 `package.json` 和 `Start-HoverCV-Windows.bat`。不要直接在压缩包里运行。
+3. **双击启动。** 双击 **Start-HoverCV-Windows.bat**（隐藏扩展名时显示为 `Start-HoverCV-Windows`，类型为“Windows 批处理文件”）。首次会联网安装组件，保持弹出的命令窗口打开，等它显示 **“HoverCV 已就绪”**。后续通常会跳过安装。
+4. **打开并上传 PDF。** 浏览器会尝试自动打开；如果没有，在这台电脑的 Chrome 或 Edge 地址栏输入 `http://localhost:3000`。点击左侧 **“更换 / 上传 PDF”**，从电脑选择简历 PDF，开始标注。
+
+不需要安装 Git、Docker，不需要注册账户或填写 AI 密钥，就能测试本地编辑与导出。
+
+此地址在你的电脑启动应用后才有效。它不是当前聊天云环境的预览链接，也不是能发给 HR 的公网链接。
+
+如果 Windows 双击后没有成功启动，在含有 `package.json` 的文件夹顶部地址栏输入 **cmd** 并回车，粘贴下面一条命令后回车。窗口会保留报错，便于排查：
+
+```bat
+node scripts\local-preview.mjs
+```
+
+macOS 可以双击 `Start-HoverCV-Mac.command`。如果不能直接执行，或你习惯终端：在解压文件夹里打开终端，输入下面两条命令：
+
+```bash
+npm ci
+npm run dev
+```
+
+等待窗口显示 Ready，再在这台电脑的浏览器输入 `http://localhost:3000`。Windows 可在文件夹地址栏输入 `cmd` 并回车，打开对应目录的命令窗口。
+
+## 先测试这 5 件事
+
+1. 先在示例简历的彩色标记上悬停，进入卡片后翻图，移开鼠标确认自动关闭。
+2. 点击左侧“更换 / 上传 PDF”导入一份 PDF（≤20 MB，≤30 页）；测试时先用非敏感文件。
+3. 使用“选择文字”拖选一段原文，在右侧编辑说明；也可以切换“框选区域”标记照片或扫描内容。
+4. 添加自己的图片或视频，切换“卡片样式”的模板和颜色，再点击“阅读预览”。
+5. 刷新页面确认本地恢复，再从“导出”下载独立 HTML、离线 ZIP 或可编辑项目 ZIP。
+
+本地自动保存属于**同一浏览器与同一本机地址**，请定期导出项目 ZIP 备份。
+
+## 下次打开与关闭
+
+下次继续双击对应启动文件。组件没有变化时会跳过安装；启动窗口保持打开。停止时在窗口按 **Ctrl+C**。
+
+如果再次启动时提示 HoverCV 已在运行，直接打开本机地址即可。端口被其他程序占用时，请关闭占用程序；不要结束不认识的进程。熟悉终端时可运行 `node scripts/local-preview.mjs --port 3001`，但不同端口的本地项目数据独立保存。
+
+## 本次测试范围
+
+这套启动方式可测试 PDF 上传、文字与框选、媒体卡片、本地保存恢复与导出，无需 Docker、账户或 AI 密钥。
+
+作者登录、服务器草稿和公开分享需按 README 中的 `npm run local:setup` 配置 Docker 数据库；真实 AI 还需要模型与 Tavily 密钥。暂未配置这些服务时，界面会明确显示不可用。
+
+macOS/Windows 双击入口已经提供；在当前 Linux 云环境验证共用的启动程序。没有宣称在实体 Windows/Mac 上实测过双击启动。
