@@ -59,7 +59,10 @@ test("文字多行创建、编辑保存恢复、缩放、区域重新定位", as
   await expect(page.locator(".save-status")).toContainText("已保存至本地");
   await page.reload();
   await expect(page.locator(".annotation-item")).toHaveCount(4);
-  await page.getByRole("button", { name: /真实选择测试/ }).click();
+  await page
+    .locator(".annotation-item")
+    .filter({ hasText: "真实选择测试" })
+    .click();
   await expect(page.locator("#body")).toHaveValue("这段说明来自真实文字选择");
   await page.getByRole("button", { name: "放大", exact: true }).click();
   await expect(page.locator(".zoom-controls")).toContainText("100%");
@@ -185,7 +188,7 @@ test("上传真实 PDF，三模板、四色、视频播放关闭暂停与轮播�
       "selected",
     );
   }
-  await page.getByRole("button", { name: "颜色 #35846b" }).click();
+  await page.getByRole("button", { name: "颜色 #52978c" }).click();
   await page.getByRole("button", { name: "阅读", exact: true }).click();
   await page.locator(".hotspot").hover();
   const card = page.locator(".hover-card");

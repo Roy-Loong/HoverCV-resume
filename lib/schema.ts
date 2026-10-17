@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COLOR_PRESETS } from "./colors";
 export const rectSchema = z.tuple([
   z.number().finite(),
   z.number().finite(),
@@ -78,6 +79,11 @@ export const projectSchema = z
             .regex(/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/),
           view: z.tuple([z.number(), z.number(), z.number(), z.number()]),
           rotation: z.number(),
+          themeColor: z
+            .string()
+            .regex(/^#[0-9a-fA-F]{6}$/)
+            .optional(),
+          hasTheme: z.boolean().optional(),
         }),
       )
       .max(100),
@@ -95,7 +101,7 @@ export const projectSchema = z
 export type Annotation = z.infer<typeof annotationSchema>;
 export type Project = z.infer<typeof projectSchema>;
 export type Media = z.infer<typeof mediaSchema>;
-export const COLORS = ["#6958d5", "#35846b", "#ce8a36", "#c2647d"];
+export const COLORS = COLOR_PRESETS.map((p) => p.color);
 export function newAnnotation(
   page: number,
   rects: Rect[],

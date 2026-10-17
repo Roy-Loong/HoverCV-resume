@@ -93,6 +93,11 @@ async function install() {
   await writeFile(stamp, JSON.stringify({ fingerprint }));
 }
 async function main() {
+  if (args.includes("--install-only")) {
+    await install();
+    console.log("运行组件已准备好。");
+    return;
+  }
   if (!(await portAvailable())) {
     if (await runningHoverCV()) {
       console.log(`HoverCV 已在运行。请在这台电脑的浏览器输入：${address}`);

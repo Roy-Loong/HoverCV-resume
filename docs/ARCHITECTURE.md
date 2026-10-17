@@ -6,7 +6,10 @@
 - `components/Editor.tsx`：独立编辑面板，不随阅读卡片关闭而丢失内容；导入和媒体操作，人工采纳 AI 草稿。
 - `lib/schema.ts`：Zod 版本化项目格式。内嵌素材限为特定图片/视频 MIME；链接仅 http(s)。
 - `lib/local.ts`：IndexedDB 自动保存；localStorage 仅存最近项目 ID。
-- `lib/reader.ts`：作者预览、匿名快照、离线导出共用同一独立阅读器。页面转 JPEG，相对坐标适配缩放。无 worker、外链字体或实时 AI 请求。独立脚本也包含延迟和三角形安全通道。
+- `lib/pdf-render.ts`：按设备像素比绘制原 PDF，文字标注通过 PDF 原字形着色，裁剪合成时保留背景与图像；内存与尺寸上限防止超大 Canvas。`PdfViewer` 为阅读器生成 3 倍分辨率无损 PNG，旧项目打开时也会重新生成。
+- `lib/reader.ts`：作者预览、匿名快照、离线导出共用同一独立阅读器。使用已着色的 PNG 和透明热点，相对坐标适配缩放。无 worker、外链字体或实时 AI 请求。独立脚本也包含延迟和三角形安全通道。
+- `lib/edit-history.ts`：不复制 PDF 与页面图像的 50 步会话编辑历史，合并连续输入，支持删除撤销；切换项目或刷新不跨项目恢复历史。
+- `scripts/windows-update.ps1`：Windows 本机自动更新到独立目录、预安装、替换可识别的 HoverCV 进程树，固定本机端口并生成桌面快捷方式。不会删除旧目录。
 - `lib/export.ts`：HTML/离线 ZIP；可编辑项目 ZIP 包含原 PDF、注释 JSON、媒体；有版本和 PDF 哈希校验。项目 JSON 为可独立恢复的清单，素材另存的条目便于取回。
 - `lib/server.ts`：Better Auth + PostgreSQL、SameSite/HttpOnly Cookie、Origin 写入校验、请求大小限制、服务端用户身份、限额。
 - `app/api/projects`：事务锁和 revision 乐观并发控制，409 不中断本地编辑；不接受客户端 ownerId。

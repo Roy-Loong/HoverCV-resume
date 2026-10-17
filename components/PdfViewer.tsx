@@ -10,6 +10,7 @@ import {
   type Rect,
 } from "@/lib/schema";
 import Hotspot from "./Hotspot";
+import { rasterScale, renderPdfPage } from "@/lib/pdf-render";
 export type PdfTool = "text" | "area" | "read";
 export default function PdfViewer({
   project,
@@ -20,6 +21,7 @@ export default function PdfViewer({
   onAdd,
   onPages,
   onError,
+  onRenderState,
 }: {
   project: Project;
   zoom: number;
@@ -29,15 +31,28 @@ export default function PdfViewer({
   onAdd: (a: Annotation) => void;
   onPages: (pages: Project["pages"]) => void;
   onError: (s: string) => void;
+  onRenderState: (rendering: boolean) => void;
 }) {
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
-  const callbacks = useRef({ onPages, onError });
-  callbacks.current = { onPages, onError };
+  const callbacks = useRef({ onPages, onError, onRenderState });
+  callbacks.current = { onPages, onError, onRenderState };
+  const pageCache = useRef(
+    new Map<number, { key: string; page: Project["pages"][number] }>(),
+  );
+  const appearanceKey = JSON.stringify(
+    project.annotations.map(({ page, kind, rects, color }) => ({
+      page,
+      kind,
+      rects,
+      color,
+    })),
+  );
   useEffect(() => {
     let cancelled = false;
     let task:
       ReturnType<(typeof import("pdfjs-dist"))["getDocument"]> | undefined;
     (async () => {
+      callbacks.current.onRenderState(true);
       const pdfjs = await import("pdfjs-dist");
       pdfjs.GlobalWorkerOptions.workerSrc = "/pdfjs/pdf.worker.min.mjs";
       task = pdfjs.getDocument({
@@ -52,40 +67,74 @@ export default function PdfViewer({
       if (cancelled) return;
       if (pdf.numPages > 30) throw Error("首版支持最多 30 页 PDF");
       setDoc(pdf);
-      if (!project.pages.length) {
-        const pages: Project["pages"] = [];
-        for (let i = 1; i <= pdf.numPages; i++) {
-          if (cancelled) return;
-          const p = await pdf.getPage(i);
-          const base = p.getViewport({ scale: 1 });
-          const vp = p.getViewport({ scale: Math.min(2, 1800 / base.width) });
-          const c = document.createElement("canvas");
-          c.width = Math.ceil(vp.width);
-          c.height = Math.ceil(vp.height);
-          await p.render({ canvas: c, viewport: vp }).promise;
-          pages.push({
-            width: base.width,
-            height: base.height,
-            image: c.toDataURL("image/jpeg", 0.88),
-            view: p.view as Rect,
-            rotation: p.rotate,
-          });
-          c.width = 0;
-        }
-        if (!cancelled) callbacks.current.onPages(pages);
-      }
     })().catch((e) => {
-      if (!cancelled)
+      if (!cancelled) {
+        callbacks.current.onRenderState(false);
         callbacks.current.onError(
           e instanceof Error ? e.message : "PDF 无法读取",
         );
+      }
     });
     return () => {
       cancelled = true;
       setDoc(null);
+      pageCache.current.clear();
       void task?.destroy();
     };
   }, [project.id, project.pdfHash, project.pdfData]);
+  useEffect(() => {
+    if (!doc) return;
+    const controller = new AbortController();
+    callbacks.current.onRenderState(true);
+    void (async () => {
+      const pages: Project["pages"] = [];
+      for (let i = 1; i <= doc.numPages; i++) {
+        controller.signal.throwIfAborted();
+        const annotations = project.annotations.filter(
+          (a) => a.page === i && a.kind === "text",
+        );
+        const key = JSON.stringify(
+          annotations.map(({ rects, color }) => ({ rects, color })),
+        );
+        const cached = pageCache.current.get(i);
+        if (cached?.key === key) {
+          pages.push(cached.page);
+          continue;
+        }
+        const p = await doc.getPage(i);
+        const base = p.getViewport({ scale: 1 });
+        const { canvas, theme } = await renderPdfPage(
+          p,
+          rasterScale(base.width, base.height, 3),
+          annotations,
+          1,
+          controller.signal,
+        );
+        const rendered = {
+          width: base.width,
+          height: base.height,
+          image: canvas.toDataURL("image/png"),
+          view: p.view as Rect,
+          rotation: p.rotate,
+          themeColor: theme.color,
+          hasTheme: theme.hasTheme,
+        };
+        canvas.width = 0;
+        pages.push(rendered);
+        pageCache.current.set(i, { key, page: rendered });
+      }
+      controller.signal.throwIfAborted();
+      callbacks.current.onPages(pages);
+    })()
+      .catch((e) => {
+        if (!controller.signal.aborted)
+          callbacks.current.onError(`高清预览生成失败：${e.message}`);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) callbacks.current.onRenderState(false);
+      });
+    return () => controller.abort();
+  }, [doc, appearanceKey]);
   if (!doc)
     return (
       <div className="pdf-loading">
@@ -145,9 +194,14 @@ function PdfPage({
       ey: number;
     } | null>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
+  const appearanceKey = JSON.stringify(
+    annotations
+      .filter((a) => a.kind === "text")
+      .map(({ rects, color }) => ({ rects, color })),
+  );
   useEffect(() => {
     let stop = false;
-    let render: ReturnType<PDFPageProxy["render"]> | undefined;
+    const controller = new AbortController();
     let layer: import("pdfjs-dist").TextLayer | undefined;
     setReady(false);
     (async () => {
@@ -157,16 +211,26 @@ function PdfPage({
       page.current = p;
       const v = p.getViewport({ scale: zoom });
       setSize({ width: v.width, height: v.height });
-      const dpr = Math.min(devicePixelRatio || 1, 2);
-      canvas.current.width = Math.floor(v.width * dpr);
-      canvas.current.height = Math.floor(v.height * dpr);
-      render = p.render({
-        canvas: canvas.current,
-        viewport: v,
-        transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0],
-      });
-      await render.promise;
-      if (stop) return;
+      const dpr = rasterScale(
+        v.width,
+        v.height,
+        Math.max(2, Math.min(devicePixelRatio || 1, 4)),
+      );
+      const rendered = await renderPdfPage(
+        p,
+        zoom,
+        annotations,
+        dpr,
+        controller.signal,
+      );
+      if (stop || !canvas.current || !text.current) {
+        rendered.canvas.width = 0;
+        return;
+      }
+      canvas.current.width = rendered.canvas.width;
+      canvas.current.height = rendered.canvas.height;
+      canvas.current.getContext("2d")!.drawImage(rendered.canvas, 0, 0);
+      rendered.canvas.width = 0;
       text.current.replaceChildren();
       text.current.style.setProperty("--scale-factor", String(zoom));
       text.current.style.setProperty("--total-scale-factor", String(zoom));
@@ -183,10 +247,10 @@ function PdfPage({
     });
     return () => {
       stop = true;
-      render?.cancel();
+      controller.abort();
       layer?.cancel();
     };
-  }, [doc, pageNumber, zoom]);
+  }, [doc, pageNumber, zoom, appearanceKey]);
   function selection() {
     if (tool !== "text" || !page.current || !root.current) return;
     const sel = window.getSelection();
@@ -320,7 +384,7 @@ function PdfPage({
       </div>
       <div className="page-footer">
         <span>第 {pageNumber} 页</span>
-        <span>PDF 原始排版 · {Math.round(zoom * 100)}%</span>
+        <span>高清渲染 · {Math.round(zoom * 100)}%</span>
       </div>
     </div>
   );

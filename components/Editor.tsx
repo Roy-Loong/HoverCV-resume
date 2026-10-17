@@ -38,7 +38,12 @@ import {
   GripVertical,
   LogOut,
   PanelRightClose,
+  Undo2,
+  Redo2,
 } from "lucide-react";
+import { COLOR_PRESETS } from "@/lib/colors";
+import { EditHistory } from "@/lib/edit-history";
+import { APP_VERSION } from "@/lib/version";
 import {
   bytesToData,
   COLORS,
@@ -63,6 +68,11 @@ const PdfViewer = dynamic(() => import("./PdfViewer"), {
 });
 type Modal = "export" | "publish" | "auth" | "ai" | "help" | "preview" | null;
 type User = { id: string; name: string; email: string };
+type EditSnapshot = {
+  name: string;
+  annotations: Annotation[];
+  selected: string | null;
+};
 const fileData = (file: File, onProgress?: (p: number) => void) =>
   new Promise<string>((resolve, reject) => {
     const r = new FileReader();
@@ -134,6 +144,8 @@ export default function Editor() {
     [busy, setBusy] = useState(""),
     [notice, setNotice] = useState(""),
     [saved, setSaved] = useState(false),
+    [rendering, setRendering] = useState(true),
+    [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 }),
     [user, setUser] = useState<User | null>(null),
     [mobilePanel, setMobilePanel] = useState(false),
     [config, setConfig] = useState({ ai: false, cloud: false }),
@@ -161,8 +173,11 @@ export default function Editor() {
     replaceId = useRef<string | null>(null),
     request = useRef<AbortController | null>(null);
   const projectRef = useRef(project);
+  const history = useRef(new EditHistory<EditSnapshot>());
   projectRef.current = project;
   const a = project?.annotations.find((a) => a.id === selected) || null;
+  const themePage = project?.pages.find((p) => p.hasTheme);
+  const recommendedColor = themePage?.themeColor || COLORS[0];
   const notify = useCallback((s: string) => setNotice(s), []);
   useEffect(() => {
     if (!notice) return;
@@ -299,20 +314,85 @@ export default function Editor() {
     window.addEventListener("beforeunload", leave);
     return () => window.removeEventListener("beforeunload", leave);
   }, [saved]);
-  function mutate(fn: (p: Project) => Project) {
-    setProject((p) =>
-      p ? { ...fn(p), updatedAt: new Date().toISOString() } : p,
-    );
+  useEffect(() => {
+    history.current.clear();
+    setHistoryCounts(history.current.counts);
+  }, [project?.id]);
+  function snapshot(p: Project): EditSnapshot {
+    return { name: p.name, annotations: p.annotations, selected };
+  }
+  function mutate(fn: (p: Project) => Project, group = "") {
+    const current = projectRef.current;
+    if (!current) return;
+    history.current.record(snapshot(current), group);
+    const next = { ...fn(current), updatedAt: new Date().toISOString() };
+    projectRef.current = next;
+    setProject(next);
+    setSaved(false);
+    setHistoryCounts(history.current.counts);
+  }
+  function travelHistory(direction: "undo" | "redo") {
+    const current = projectRef.current;
+    if (!current) return;
+    const previous = history.current[direction](snapshot(current));
+    if (!previous) return;
+    const next = {
+      ...current,
+      name: previous.name,
+      annotations: previous.annotations,
+      updatedAt: new Date().toISOString(),
+    };
+    projectRef.current = next;
+    setProject(next);
+    setSelected(previous.selected);
+    setAdjustId(null);
+    setSaved(false);
+    setHistoryCounts(history.current.counts);
+    notify(direction === "undo" ? "已撤销上一步" : "已恢复上一步");
+  }
+  function removeAnnotation(id: string) {
+    mutate((p) => ({
+      ...p,
+      annotations: p.annotations.filter((n) => n.id !== id),
+    }));
+    if (selected === id) setSelected(null);
+    setAdjustId(null);
+    notify("已删除注释，点击上方“撤销”即可恢复");
   }
   function patch(updates: Partial<Annotation>) {
     if (!a) return;
-    mutate((p) => ({
-      ...p,
-      annotations: p.annotations.map((n) =>
-        n.id === a.id ? { ...n, ...updates } : n,
-      ),
-    }));
+    mutate(
+      (p) => ({
+        ...p,
+        annotations: p.annotations.map((n) =>
+          n.id === a.id ? { ...n, ...updates } : n,
+        ),
+      }),
+      `${a.id}:${Object.keys(updates).sort().join(",")}`,
+    );
   }
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (modal) return;
+      const target = e.target as HTMLElement;
+      // Text fields keep the browser's native caret, delete and undo behavior.
+      if (target.closest("input,textarea,select,[contenteditable=true]"))
+        return;
+      const command = e.ctrlKey || e.metaKey;
+      if (command && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        travelHistory(e.shiftKey ? "redo" : "undo");
+      } else if (command && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        travelHistory("redo");
+      } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+        e.preventDefault();
+        removeAnnotation(selected);
+      } else if (e.key === "Escape") setAdjustId(null);
+    };
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  });
   const onPages = useCallback((pages: Project["pages"]) => {
     setProject((p) => (p ? { ...p, pages } : p));
   }, []);
@@ -337,6 +417,7 @@ export default function Editor() {
       setAdjustId(null);
       notify("定位已更新，内容已保留");
     } else {
+      n.color = recommendedColor;
       mutate((p) => ({ ...p, annotations: [...p.annotations, n] }));
       setSelected(n.id);
     }
@@ -608,7 +689,7 @@ export default function Editor() {
             <MousePointer2 size={22} fill="currentColor" />
           </span>
           Hover<span>CV</span>
-          <span className="beta">BETA</span>
+          <span className="beta">v{APP_VERSION}</span>
         </a>
         <div className="breadcrumbs">
           工作空间 <ChevronRight size={12} />
@@ -617,8 +698,18 @@ export default function Editor() {
         <div className="top-actions">
           <span className="save-status">
             <span className={saved ? "status-dot" : ""} />
-            {saved ? "已保存至本地" : "准备保存…"}
+            {rendering
+              ? "正在更新高清预览…"
+              : saved
+                ? "已保存至本地"
+                : "准备保存…"}
           </span>
+          <button
+            className="btn btn-primary upload-primary"
+            onClick={() => uploadRef.current?.click()}
+          >
+            <Upload size={16} /> 上传 PDF
+          </button>
           <button
             className="icon-btn help-top"
             aria-label="使用帮助"
@@ -629,7 +720,7 @@ export default function Editor() {
           <button
             className="btn btn-quiet"
             onClick={() => setModal("preview")}
-            disabled={!project?.pages.length}
+            disabled={!project?.pages.length || rendering}
           >
             <BookOpen size={15} />
             阅读预览
@@ -637,7 +728,7 @@ export default function Editor() {
           <button
             className="btn btn-secondary"
             onClick={() => setModal("export")}
-            disabled={!project?.pages.length}
+            disabled={!project?.pages.length || rendering}
           >
             <ArrowDownToLine size={15} />
             导出
@@ -648,7 +739,7 @@ export default function Editor() {
               setShare("");
               setModal("publish");
             }}
-            disabled={!project?.pages.length}
+            disabled={!project?.pages.length || rendering}
           >
             <ArrowUpRight size={16} />
             发布简历
@@ -669,7 +760,7 @@ export default function Editor() {
             项目文件{" "}
             <button
               className="icon-btn"
-              title="上传 PDF"
+              title="更换项目 PDF"
               onClick={() => uploadRef.current?.click()}
             >
               <Plus size={15} />
@@ -706,31 +797,45 @@ export default function Editor() {
           </div>
           <div className="annotation-list">
             {project?.annotations.map((n, i) => (
-              <button
+              <div
+                className={`annotation-row ${selected === n.id ? "active" : ""}`}
                 key={n.id}
-                className={`annotation-item ${n.id === selected ? "active" : ""}`}
-                onClick={() => {
-                  setSelected(n.id);
-                  setMobilePanel(true);
-                  document
-                    .querySelector(`[data-page="${n.page}"]`)
-                    ?.scrollIntoView({ behavior: "smooth", block: "center" });
-                }}
               >
-                <span
-                  className="annotation-number"
-                  style={{ color: n.color, background: n.color + "12" }}
+                <button
+                  key={n.id}
+                  className={`annotation-item ${n.id === selected ? "active" : ""}`}
+                  onClick={() => {
+                    setSelected(n.id);
+                    setMobilePanel(true);
+                    document
+                      .querySelector(`[data-page="${n.page}"]`)
+                      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }}
                 >
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <span>
-                  <strong>{n.title || "新的区域注释"}</strong>
-                  <small>
-                    第 {n.page} 页 · {n.media.length ? "图文卡片" : "文字卡片"}
-                  </small>
-                </span>
-                <ChevronRight size={13} />
-              </button>
+                  <span
+                    className="annotation-number"
+                    style={{ color: n.color, background: n.color + "12" }}
+                  >
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <span>
+                    <strong>{n.title || "新的区域注释"}</strong>
+                    <small>
+                      第 {n.page} 页 ·{" "}
+                      {n.media.length ? "图文卡片" : "文字卡片"}
+                    </small>
+                  </span>
+                  <ChevronRight size={13} />
+                </button>
+                <button
+                  className="annotation-delete icon-btn"
+                  aria-label={`删除注释：${n.title}`}
+                  title="删除这条注释（可撤销）"
+                  onClick={() => removeAnnotation(n.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             ))}
           </div>
           <button
@@ -859,6 +964,40 @@ export default function Editor() {
               <span>阅读</span>
             </button>
           </div>
+          <div
+            className="history-controls"
+            role="toolbar"
+            aria-label="撤销与删除"
+          >
+            <button
+              title="撤销（Ctrl+Z）"
+              aria-label="撤销"
+              disabled={!historyCounts.undo}
+              onClick={() => travelHistory("undo")}
+            >
+              <Undo2 size={15} />
+              <span>撤销</span>
+            </button>
+            <button
+              title="重做（Ctrl+Shift+Z / Ctrl+Y）"
+              aria-label="重做"
+              disabled={!historyCounts.redo}
+              onClick={() => travelHistory("redo")}
+            >
+              <Redo2 size={15} />
+              <span>重做</span>
+            </button>
+            <button
+              className="danger"
+              title="删除所选注释（Delete，可撤销）"
+              aria-label="删除所选注释"
+              disabled={!a}
+              onClick={() => a && removeAnnotation(a.id)}
+            >
+              <Trash2 size={15} />
+              <span>删除</span>
+            </button>
+          </div>
           <div className="zoom-controls">
             <button
               className="icon-btn"
@@ -873,9 +1012,7 @@ export default function Editor() {
             <button
               className="icon-btn"
               aria-label="放大"
-              onClick={() =>
-                setZoom((z) => Math.min(1.8, +(z + 0.1).toFixed(1)))
-              }
+              onClick={() => setZoom((z) => Math.min(2, +(z + 0.1).toFixed(1)))}
             >
               <ZoomIn size={15} />
             </button>
@@ -938,6 +1075,7 @@ export default function Editor() {
               onAdd={onAdd}
               onPages={onPages}
               onError={notify}
+              onRenderState={setRendering}
             />
           )}
           <div className="canvas-bottom">
@@ -1238,13 +1376,34 @@ export default function Editor() {
                     统一 360 × 420，长内容在卡片内滚动。
                   </p>
                   <div className="field-divider" />
-                  <label className="field-label">标记颜色</label>
+                  <label className="field-label">
+                    文字颜色 · 12 款柔和配色
+                  </label>
+                  <p className="muted-small">
+                    仅改变标注文字的颜色，保留原字形，不加底色和下划线。
+                  </p>
+                  <button
+                    className="recommended-color"
+                    onClick={() => patch({ color: recommendedColor })}
+                  >
+                    <span style={{ background: recommendedColor }} />
+                    <div>
+                      <strong>使用推荐颜色</strong>
+                      <small>
+                        {themePage ? "根据 PDF 主色调配" : "黑白简历推荐柔雾紫"}{" "}
+                        · {recommendedColor}
+                      </small>
+                    </div>
+                    <Sparkles size={16} />
+                  </button>
                   <div className="color-options">
-                    {COLORS.map((c) => (
+                    {COLOR_PRESETS.map(({ color: c, name }) => (
                       <button
                         key={c}
                         style={{ background: c }}
                         aria-label={"颜色 " + c}
+                        title={name + " " + c}
+                        aria-pressed={a.color === c}
                         onClick={() => patch({ color: c })}
                       >
                         {a.color === c && <Check size={16} />}
@@ -1260,53 +1419,6 @@ export default function Editor() {
                       />
                     </label>
                   </div>
-                  <button
-                    className="text-button"
-                    onClick={() => {
-                      if (!project?.pages[0]) return;
-                      const img = new Image();
-                      img.onload = () => {
-                        const c = document.createElement("canvas");
-                        c.width = 90;
-                        c.height = 130;
-                        const x = c.getContext("2d")!;
-                        x.drawImage(img, 0, 0, 90, 130);
-                        const d = x.getImageData(0, 0, 90, 130).data,
-                          colors = new Map<string, number>();
-                        for (let i = 0; i < d.length; i += 4) {
-                          const r = d[i],
-                            g = d[i + 1],
-                            b = d[i + 2];
-                          if (
-                            Math.max(r, g, b) - Math.min(r, g, b) < 30 ||
-                            Math.max(r, g, b) > 245
-                          )
-                            continue;
-                          const hex =
-                            "#" +
-                            [r, g, b]
-                              .map((n) =>
-                                (Math.round(n / 24) * 24)
-                                  .toString(16)
-                                  .padStart(2, "0"),
-                              )
-                              .join("");
-                          colors.set(hex, (colors.get(hex) || 0) + 1);
-                        }
-                        const top = [...colors].sort(
-                          (a, b) => b[1] - a[1],
-                        )[0]?.[0];
-                        if (top) {
-                          patch({ color: top });
-                          notify("已使用简历中的主题色候选");
-                        } else notify("未发现明显主题色，请手动选择");
-                      };
-                      img.src = project.pages[0].image;
-                    }}
-                  >
-                    从简历提取主色候选
-                    <ArrowUpRight size={12} />
-                  </button>
                   <div className="field-divider" />
                   <label className="toggle-row">
                     <div>
@@ -1351,15 +1463,7 @@ export default function Editor() {
               </span>
               <button
                 className="text-button danger"
-                onClick={() => {
-                  if (confirm("删除这条注释及其素材？")) {
-                    mutate((p) => ({
-                      ...p,
-                      annotations: p.annotations.filter((n) => n.id !== a.id),
-                    }));
-                    setSelected(null);
-                  }
-                }}
+                onClick={() => removeAnnotation(a.id)}
               >
                 <Trash2 size={13} />
                 删除注释

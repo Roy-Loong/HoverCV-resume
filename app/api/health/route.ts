@@ -1,5 +1,7 @@
+import { APP_VERSION } from "@/lib/version";
 export async function GET() {
   return Response.json({
+    version: APP_VERSION,
     cloud: !!(
       process.env.DATABASE_URL &&
       process.env.BETTER_AUTH_SECRET &&
