@@ -22,6 +22,7 @@ import {
   FileText,
 } from "lucide-react";
 import type { Annotation } from "@/lib/schema";
+import ImageFrame from "./ImageFrame";
 import { HOVER_OPEN_MS, HOVER_CLOSE_MS, SLIDESHOW_MS } from "@/lib/reader";
 export default function Hotspot({
   annotation: a,
@@ -105,10 +106,10 @@ export default function Hotspot({
   const media = a.media[index];
   const mediaBlock = media && (
     <div className="card-media">
-      <div className="media-viewport">
-        {media.type === "image" ? (
-          <img src={media.src} alt={media.caption} />
-        ) : (
+      {media.type === "image" ? (
+        <ImageFrame media={media} />
+      ) : (
+        <div className="media-viewport">
           <video
             ref={video}
             src={media.src}
@@ -117,8 +118,8 @@ export default function Hotspot({
             preload="metadata"
             onPointerEnter={() => setPaused(true)}
           />
-        )}
-      </div>
+        </div>
+      )}
       <div className="media-caption">{media.caption || "作品展示"}</div>
       <div
         className="media-controls"

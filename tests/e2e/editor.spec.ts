@@ -202,7 +202,7 @@ test("上传真实 PDF，三模板、四色、视频播放关闭暂停与轮播�
   expect(await handle!.evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
 });
 
-test("180/250ms 悬浮延迟、3.5 秒轮播与控件暂停", async ({ page }) => {
+test("180/150ms 悬浮延迟、3.5 秒轮播与控件暂停", async ({ page }) => {
   await ready(page);
   await page.getByRole("button", { name: "卡片样式" }).click();
   await page.locator(".toggle-row input").check();
@@ -221,7 +221,7 @@ test("180/250ms 悬浮延迟、3.5 秒轮播与控件暂停", async ({ page }) =
   await page.clock.runFor(7000);
   await expect(card.locator(".media-controls")).toContainText("02");
   await page.mouse.move(280, 110, { steps: 5 });
-  await page.clock.runFor(249);
+  await page.clock.runFor(149);
   await expect(card).toBeVisible();
   await page.clock.runFor(2);
   await expect(card).toHaveCount(0);

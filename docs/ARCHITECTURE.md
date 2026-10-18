@@ -2,7 +2,8 @@
 
 - `components/PdfViewer.tsx`：PDF.js 6 worker 独立部署、Canvas + 官方文字层、逐行 Range / 区域选择。文本保持浏览器原生选择；未启用 PDF 脚本执行，也没有渲染 PDF 内的可执行表单或注释脚本。
 - `lib/coordinates.ts`：CSS 位置经 PageViewport 转换回原生 PDF 坐标，去除 Range 中元素/文本重复包围框；锚点与文档 SHA-256、页码、原文/上下文绑定。
-- `components/Hotspot.tsx`：Floating UI 的 offset/flip/shift/size/autoUpdate/safePolygon、180/250 ms、一次仅一卡。键盘焦点和 Escape；手机底部浮层；视频与轮播清理。
+- `components/Hotspot.tsx`：Floating UI 的 offset/flip/shift/size/autoUpdate/safePolygon、180/150 ms、一次仅一卡。键盘焦点和 Escape；手机底部浮层；视频与轮播清理。关闭延迟按用户后续要求从 250 ms 调为 150 ms。
+- `components/ImageSettings.tsx` / `ImageFrame.tsx` / `lib/media-layout.ts`：每张图片独立保存显示比例、缩放、焦点与高度；默认按原图比例完整展示。指针捕获支持拖动，滑块可用键盘调整。编辑器与独立阅读器共用生成的图片样式，源文件字节不变，旧项目缺少设置时使用默认值。
 - `components/Editor.tsx`：独立编辑面板，不随阅读卡片关闭而丢失内容；导入和媒体操作，人工采纳 AI 草稿。
 - `lib/schema.ts`：Zod 版本化项目格式。内嵌素材限为特定图片/视频 MIME；链接仅 http(s)。
 - `lib/local.ts`：IndexedDB 自动保存；localStorage 存最近项目 ID，另由面板组件保存本机布局偏好。

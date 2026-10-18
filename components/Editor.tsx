@@ -44,6 +44,7 @@ import {
   PanelsTopLeft,
 } from "lucide-react";
 import CanvasViewport from "./CanvasViewport";
+import ImageSettings from "./ImageSettings";
 import { PanelDivider, useWorkspacePanels } from "./WorkspacePanels";
 import { COLOR_PRESETS } from "@/lib/colors";
 import { EditHistory } from "@/lib/edit-history";
@@ -71,7 +72,8 @@ const PdfViewer = dynamic(() => import("./PdfViewer"), {
   ssr: false,
   loading: () => <div className="pdf-loading">正在准备阅读器…</div>,
 });
-type Modal = "export" | "publish" | "auth" | "ai" | "help" | "preview" | null;
+type Modal =
+  "export" | "publish" | "auth" | "ai" | "help" | "preview" | "image" | null;
 type User = { id: string; name: string; email: string };
 type EditSnapshot = {
   name: string;
@@ -171,7 +173,8 @@ export default function Editor() {
     [aiContext, setAiContext] = useState(""),
     [progress, setProgress] = useState(0),
     [adjustId, setAdjustId] = useState<string | null>(null),
-    [aiTarget, setAiTarget] = useState<string | null>(null);
+    [aiTarget, setAiTarget] = useState<string | null>(null),
+    [imageId, setImageId] = useState<string | null>(null);
   const uploadRef = useRef<HTMLInputElement>(null),
     importRef = useRef<HTMLInputElement>(null),
     mediaRef = useRef<HTMLInputElement>(null),
@@ -182,6 +185,9 @@ export default function Editor() {
   const history = useRef(new EditHistory<EditSnapshot>());
   projectRef.current = project;
   const a = project?.annotations.find((a) => a.id === selected) || null;
+  const editedImage = a?.media.find(
+    (m) => m.id === imageId && m.type === "image",
+  );
   const themePage = project?.pages.find((p) => p.hasTheme);
   const recommendedColor = themePage?.themeColor || COLORS[0];
   const notify = useCallback((s: string) => setNotice(s), []);
@@ -1311,6 +1317,18 @@ export default function Editor() {
                             }
                           />
                           <div className="media-actions">
+                            {m.type === "image" && (
+                              <button
+                                className="image-adjust-button"
+                                aria-label={`调整图片 ${i + 1}`}
+                                onClick={() => {
+                                  setImageId(m.id);
+                                  setModal("image");
+                                }}
+                              >
+                                调整图片
+                              </button>
+                            )}
                             <button
                               onClick={() => {
                                 replaceId.current = m.id;
@@ -1595,7 +1613,7 @@ export default function Editor() {
           }}
         >
           <section
-            className={`modal ${modal === "preview" ? "preview-modal" : ""}`}
+            className={`modal ${modal === "preview" ? "preview-modal" : ""} ${modal === "image" ? "image-settings-modal" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-label={
@@ -1606,6 +1624,7 @@ export default function Editor() {
                 ai: "AI 检索草稿",
                 help: "使用指南",
                 preview: "阅读预览",
+                image: "调整图片",
               }[modal]
             }
           >
@@ -1619,6 +1638,19 @@ export default function Editor() {
             >
               <X size={19} />
             </button>
+            {modal === "image" && editedImage && a && (
+              <ImageSettings
+                media={editedImage}
+                onChange={(imageLayout) =>
+                  patch({
+                    media: a.media.map((m) =>
+                      m.id === editedImage.id ? { ...m, imageLayout } : m,
+                    ),
+                  })
+                }
+                onDone={() => setModal(null)}
+              />
+            )}
             {modal === "export" && (
               <>
                 <span className="modal-icon">

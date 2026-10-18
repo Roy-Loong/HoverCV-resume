@@ -27,11 +27,22 @@ const mediaUrl = z
       ),
     "仅支持嵌入的图片或视频",
   );
+export const imageLayoutSchema = z.object({
+  fit: z.enum(["contain", "cover"]).default("contain"),
+  zoom: z.number().finite().min(0.5).max(3).default(1),
+  x: z.number().finite().min(0).max(100).default(50),
+  y: z.number().finite().min(0).max(100).default(50),
+  height: z
+    .union([z.literal("auto"), z.number().int().min(100).max(480)])
+    .default("auto"),
+});
+export type ImageLayout = z.infer<typeof imageLayoutSchema>;
 export const mediaSchema = z.object({
   id: z.string().max(80),
   type: z.enum(["image", "video"]),
   src: mediaUrl,
   caption: z.string().max(500),
+  imageLayout: imageLayoutSchema.optional(),
 });
 export const annotationSchema = z.object({
   id: z.string().max(80),
