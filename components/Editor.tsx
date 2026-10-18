@@ -40,7 +40,11 @@ import {
   PanelRightClose,
   Undo2,
   Redo2,
+  Hand,
+  PanelsTopLeft,
 } from "lucide-react";
+import CanvasViewport from "./CanvasViewport";
+import { PanelDivider, useWorkspacePanels } from "./WorkspacePanels";
 import { COLOR_PRESETS } from "@/lib/colors";
 import { EditHistory } from "@/lib/edit-history";
 import { APP_VERSION } from "@/lib/version";
@@ -135,6 +139,7 @@ function demoImage(theme: number) {
   return c.toDataURL("image/png");
 }
 export default function Editor() {
+  const panels = useWorkspacePanels();
   const [project, setProject] = useState<Project | null>(null),
     [selected, setSelected] = useState<string | null>(null),
     [tool, setTool] = useState<PdfTool>("text"),
@@ -397,6 +402,7 @@ export default function Editor() {
     setProject((p) => (p ? { ...p, pages } : p));
   }, []);
   function onAdd(n: Annotation) {
+    panels.openInspector();
     if (adjustId) {
       mutate((p) => ({
         ...p,
@@ -644,7 +650,11 @@ export default function Editor() {
     };
   }, [modal]);
   return (
-    <div className="app-shell">
+    <div
+      ref={panels.shellRef}
+      className={`app-shell ${panels.className}`}
+      style={panels.style}
+    >
       <input
         ref={uploadRef}
         type="file"
@@ -746,7 +756,7 @@ export default function Editor() {
           </button>
         </div>
       </header>
-      <aside className="sidebar">
+      <aside className="sidebar" id="project-sidebar">
         <div className="workspace-label">
           <span className="workspace-avatar">H</span>
           <div>
@@ -806,6 +816,7 @@ export default function Editor() {
                   className={`annotation-item ${n.id === selected ? "active" : ""}`}
                   onClick={() => {
                     setSelected(n.id);
+                    panels.openInspector();
                     setMobilePanel(true);
                     document
                       .querySelector(`[data-page="${n.page}"]`)
@@ -896,10 +907,18 @@ export default function Editor() {
           </div>
         </div>
       </aside>
+      <PanelDivider
+        side="left"
+        width={panels.left}
+        max={panels.maximums.left}
+        collapsed={panels.preferences.leftCollapsed}
+        onResize={(w) => panels.resize("left", w)}
+        onToggle={() => panels.toggle("left")}
+        onReset={() => panels.resetSide("left")}
+      />
       <main className="workspace">
         <div className="workspace-heading">
           <div>
-            <div className="eyebrow">YOUR RESUME, WITH MORE TO SAY.</div>
             <h1>
               <button
                 className="project-name"
@@ -917,25 +936,34 @@ export default function Editor() {
               </button>
               <span className="draft-tag">草稿</span>
             </h1>
-            <p>保留简历的简洁，让精彩在悬停间展开。</p>
           </div>
-          <button
-            className="btn btn-quiet mobile-inspect"
-            onClick={() => setMobilePanel(!mobilePanel)}
-          >
-            <Settings2 size={16} />
-            注释
-          </button>
-          <button
-            className="demo-reset"
-            onClick={() => {
-              if (confirm("重新打开虚构演示项目？请先导出当前项目备份。"))
-                void loadDemo();
-            }}
-          >
-            体验示例
-            <ArrowUpRight size={13} />
-          </button>
+          <div className="workspace-heading-actions">
+            <button
+              className="layout-reset icon-btn"
+              aria-label="恢复默认布局"
+              title="恢复两侧面板的默认宽度"
+              onClick={panels.reset}
+            >
+              <PanelsTopLeft size={16} />
+            </button>
+            <button
+              className="btn btn-quiet mobile-inspect"
+              onClick={() => setMobilePanel(!mobilePanel)}
+            >
+              <Settings2 size={16} />
+              注释
+            </button>
+            <button
+              className="demo-reset"
+              onClick={() => {
+                if (confirm("重新打开虚构演示项目？请先导出当前项目备份。"))
+                  void loadDemo();
+              }}
+            >
+              体验示例
+              <ArrowUpRight size={13} />
+            </button>
+          </div>
         </div>
         <div className="canvas-toolbar">
           <div className="tool-tabs" role="toolbar" aria-label="PDF 工具">
@@ -943,6 +971,7 @@ export default function Editor() {
               className={tool === "text" ? "active" : ""}
               onClick={() => setTool("text")}
               title="拖选文字创建注释"
+              aria-label="选择文字"
             >
               <MousePointer2 size={15} />
               <span>选择文字</span>
@@ -951,14 +980,25 @@ export default function Editor() {
               className={tool === "area" ? "active" : ""}
               onClick={() => setTool("area")}
               title="框选图片或扫描区域"
+              aria-label="框选区域"
             >
               <Scan size={16} />
               <span>框选区域</span>
+            </button>
+            <button
+              className={tool === "pan" ? "active" : ""}
+              aria-label="拖动画布"
+              title="拖动画布；也可按住空格或鼠标中键临时拖动"
+              onClick={() => setTool("pan")}
+            >
+              <Hand size={15} />
+              <span>拖动</span>
             </button>
             <span className="toolbar-divider" />
             <button
               className={tool === "read" ? "active" : ""}
               onClick={() => setTool("read")}
+              aria-label="阅读"
             >
               <BookOpen size={15} />
               <span>阅读</span>
@@ -1039,26 +1079,30 @@ export default function Editor() {
             </button>
           </div>
         </div>
-        <div
-          className={`document-canvas ${tool === "area" ? "area-mode" : ""}`}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            const f = e.dataTransfer.files[0];
-            if (f?.type === "application/pdf") void upload(f);
-          }}
+        <CanvasViewport
+          tool={tool}
+          zoom={zoom}
+          onZoom={setZoom}
+          onUpload={(file) => void upload(file)}
         >
-          <div className="canvas-hint">
+          <div
+            className="canvas-hint"
+            title="拖动两侧分隔线调整面板宽度；按住空格或鼠标中键拖动画布；Ctrl/⌘ + 滚轮或触控板双指捏合缩放"
+          >
             <span className="hint-icon">
               <Sparkles size={13} />
             </span>
-            {adjustId
-              ? "重新选择定位区域，原有内容将保留"
-              : tool === "read"
-                ? "悬停彩色标记，看看简历背后的故事"
-                : tool === "area"
-                  ? "拖出矩形框，标记图片或扫描区域 · 不执行 OCR"
-                  : "拖选文字添加注释，悬停标记预览卡片"}
+            <span className="canvas-help">
+              {adjustId
+                ? "重新选择定位区域，原有内容将保留"
+                : tool === "pan"
+                  ? "按住鼠标拖动画布 · Ctrl + 滚轮缩放"
+                  : tool === "read"
+                    ? "悬停彩色标记，看看简历背后的故事"
+                    : tool === "area"
+                      ? "拖出矩形框，标记图片或扫描区域 · 不执行 OCR"
+                      : "拖选文字添加注释 · 空格拖动，Ctrl + 滚轮缩放"}
+            </span>
             <span className="demo-pill">
               {project?.pdfName === "Alex_Morgan_Resume.pdf"
                 ? "虚构示例"
@@ -1071,7 +1115,11 @@ export default function Editor() {
               zoom={zoom}
               tool={tool}
               selected={selected}
-              onSelect={setSelected}
+              onSelect={(id) => {
+                setSelected(id);
+                setMobilePanel(true);
+                panels.openInspector();
+              }}
               onAdd={onAdd}
               onPages={onPages}
               onError={notify}
@@ -1081,7 +1129,7 @@ export default function Editor() {
           <div className="canvas-bottom">
             <ShieldCheck size={12} /> 原 PDF 排版始终保留 · 注释不会修改底稿
           </div>
-        </div>
+        </CanvasViewport>
         <footer className="workspace-footer">
           <span>
             <span className="status-dot" />
@@ -1093,7 +1141,19 @@ export default function Editor() {
           </span>
         </footer>
       </main>
-      <aside className={`inspector ${mobilePanel ? "mobile-open" : ""}`}>
+      <PanelDivider
+        side="right"
+        width={panels.right}
+        max={panels.maximums.right}
+        collapsed={panels.preferences.rightCollapsed}
+        onResize={(w) => panels.resize("right", w)}
+        onToggle={() => panels.toggle("right")}
+        onReset={() => panels.resetSide("right")}
+      />
+      <aside
+        className={`inspector ${mobilePanel ? "mobile-open" : ""}`}
+        id="annotation-inspector"
+      >
         <div className="inspector-heading">
           <div>
             <Settings2 size={16} />
@@ -1104,7 +1164,8 @@ export default function Editor() {
             aria-label="关闭设置"
             onClick={() => {
               setMobilePanel(false);
-              setSelected(null);
+              if (window.matchMedia("(min-width: 761px)").matches)
+                panels.toggle("right");
             }}
           >
             <PanelRightClose size={16} />

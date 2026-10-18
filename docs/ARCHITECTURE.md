@@ -5,7 +5,9 @@
 - `components/Hotspot.tsx`：Floating UI 的 offset/flip/shift/size/autoUpdate/safePolygon、180/250 ms、一次仅一卡。键盘焦点和 Escape；手机底部浮层；视频与轮播清理。
 - `components/Editor.tsx`：独立编辑面板，不随阅读卡片关闭而丢失内容；导入和媒体操作，人工采纳 AI 草稿。
 - `lib/schema.ts`：Zod 版本化项目格式。内嵌素材限为特定图片/视频 MIME；链接仅 http(s)。
-- `lib/local.ts`：IndexedDB 自动保存；localStorage 仅存最近项目 ID。
+- `lib/local.ts`：IndexedDB 自动保存；localStorage 存最近项目 ID，另由面板组件保存本机布局偏好。
+- `components/WorkspacePanels.tsx`：可拖动及键盘调整的左右分隔线，折叠/恢复面板，响应式宽度预算至少保留 360px 桌面编辑空间；布局偏好与项目及编辑历史独立。
+- `components/CanvasViewport.tsx`：指针捕获处理手形、空格和中键平移；局部非被动滚轮事件处理 Ctrl/⌘ 缩放；按原始 PDF 页面比例记录锚点，等待页面尺寸更新后还原指向，不变更原始坐标。
 - `lib/pdf-render.ts`：按设备像素比绘制原 PDF，文字标注通过 PDF 原字形着色，裁剪合成时保留背景与图像；内存与尺寸上限防止超大 Canvas。`PdfViewer` 为阅读器生成 3 倍分辨率无损 PNG，旧项目打开时也会重新生成。
 - `lib/reader.ts`：作者预览、匿名快照、离线导出共用同一独立阅读器。使用已着色的 PNG 和透明热点，相对坐标适配缩放。无 worker、外链字体或实时 AI 请求。独立脚本也包含延迟和三角形安全通道。
 - `lib/edit-history.ts`：不复制 PDF 与页面图像的 50 步会话编辑历史，合并连续输入，支持删除撤销；切换项目或刷新不跨项目恢复历史。

@@ -11,7 +11,7 @@ import {
 } from "@/lib/schema";
 import Hotspot from "./Hotspot";
 import { rasterScale, renderPdfPage } from "@/lib/pdf-render";
-export type PdfTool = "text" | "area" | "read";
+export type PdfTool = "text" | "area" | "read" | "pan";
 export default function PdfViewer({
   project,
   zoom,
@@ -333,6 +333,7 @@ function PdfPage({
       <div
         className={`pdf-page tool-${tool}`}
         data-page={pageNumber}
+        data-base-width={page.current?.getViewport({ scale: 1 }).width}
         ref={root}
         style={{ width: size.width, height: size.height }}
         onPointerDown={down}
@@ -364,8 +365,8 @@ function PdfPage({
                     height: `${h}%`,
                   }}
                   selected={selected === a.id}
-                  onEdit={tool === "read" ? undefined : () => onSelect(a.id)}
-                  disabled={tool === "area"}
+                  onEdit={tool === "text" ? () => onSelect(a.id) : undefined}
+                  disabled={tool === "area" || tool === "pan"}
                 />
               );
             }),
