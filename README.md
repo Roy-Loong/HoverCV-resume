@@ -6,6 +6,12 @@
 
 本项目依据用户提供的开发提示词从零构建。 后续补充的 [原始 PRD](docs/PRD.md) 已归档，[实现差异](docs/PRD_REVIEW.md) 和 [正式验收映射](docs/ACCEPTANCE.md) 如实记录部分实现及未验证内容。界面参考 [awesome-design-md](https://github.com/VoltAgent/awesome-design-md) 的 Notion 与 Linear 分析，设计规则见 [DESIGN.md](DESIGN.md)。示例简历与作品均为虚构。
 
+## 给朋友发网页链接
+
+支持部署为免登录的网页编辑器：朋友打开网址，上传自己的 PDF，编辑悬浮卡片并导出，无需安装软件。已准备 Vercel 配置，见 **[首次网页部署指引](WEB_DEPLOY_ZH.md)**。首次部署需要仓库所有者用 GitHub 登录 Vercel、导入本仓库并点击 Deploy；平台生成生产网址后即可分享。后续推送 `main` 自动更新网站。
+
+网页版默认只在浏览器内处理和保存个人资料，隐藏未配置的登录、云发布与 AI 入口。可导出独立 HTML、离线阅读 ZIP、可编辑项目 ZIP。
+
 ## 最快开始：本地编辑与导出
 
 已经有桌面快捷方式的 Windows 用户：双击 **“HoverCV 更新并启动”** 即可获取新版。还没有快捷方式时，按 [自动更新指引](START_HERE_ZH.md#已经运行过旧版自动更新) 执行一行 PowerShell 命令，无需手动下载和解压。
@@ -131,4 +137,4 @@ git commit -m "Describe your change"
 git push origin main
 ```
 
-MIT 许可证、第三方许可说明、虚构素材来源都已放入仓库。源码发布到 GitHub 后，按指引在本机启动即可测试；当前没有部署公网网站。
+MIT 许可证、第三方许可说明、虚构素材来源都已放入仓库。源码发布到 GitHub 后，可按本机指引测试，也可按网页部署指引上线。仓库中的配置不代表公网网站已经部署成功。

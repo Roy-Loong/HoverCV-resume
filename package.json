@@ -1,10 +1,11 @@
 {
   "name": "hovercv",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 0.0.0.0",
     "build": "next build && node scripts/standalone.mjs",
+    "build:web": "node scripts/build-web.mjs",
     "start": "node scripts/start-production.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -18,7 +19,7 @@
     "format": "prettier --write app components lib scripts tests *.ts *.json *.md compose.yaml"
   },
   "engines": {
-    "node": ">=24"
+    "node": "24.x"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1152.0",

@@ -66,6 +66,7 @@ import {
 } from "@/lib/export";
 import { readerHtml } from "@/lib/reader";
 import type { PdfTool } from "./PdfViewer";
+const BROWSER_ONLY = process.env.NEXT_PUBLIC_HOVERCV_BROWSER_ONLY === "1";
 const PdfViewer = dynamic(() => import("./PdfViewer"), {
   ssr: false,
   loading: () => <div className="pdf-loading">正在准备阅读器…</div>,
@@ -287,6 +288,7 @@ export default function Editor() {
         await loadDemo();
       }
     })();
+    if (BROWSER_ONLY) return;
     void fetch("/api/health")
       .then((r) => r.json())
       .then(setConfig)
@@ -736,24 +738,26 @@ export default function Editor() {
             阅读预览
           </button>
           <button
-            className="btn btn-secondary"
+            className={`btn ${BROWSER_ONLY ? "btn-primary" : "btn-secondary"}`}
             onClick={() => setModal("export")}
             disabled={!project?.pages.length || rendering}
           >
             <ArrowDownToLine size={15} />
             导出
           </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setShare("");
-              setModal("publish");
-            }}
-            disabled={!project?.pages.length || rendering}
-          >
-            <ArrowUpRight size={16} />
-            发布简历
-          </button>
+          {!BROWSER_ONLY && (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setShare("");
+                setModal("publish");
+              }}
+              disabled={!project?.pages.length || rendering}
+            >
+              <ArrowUpRight size={16} />
+              发布简历
+            </button>
+          )}
         </div>
       </header>
       <aside className="sidebar" id="project-sidebar">
@@ -866,7 +870,12 @@ export default function Editor() {
           <div className="privacy-note">
             <ShieldCheck size={17} />
             <div>
-              你的内容，由你掌控<p>本地自动保存，发布前仅你可见</p>
+              你的内容，由你掌控
+              <p>
+                {BROWSER_ONLY
+                  ? "浏览器内编辑，导出即可分享"
+                  : "本地自动保存，发布前仅你可见"}
+              </p>
             </div>
           </div>
           <button
@@ -889,21 +898,23 @@ export default function Editor() {
               <strong>{user?.name || "本地创作者"}</strong>
               <small>{user ? "已连接作者账户" : "无需登录，开始创作"}</small>
             </div>
-            <button
-              className="icon-btn"
-              aria-label={user ? "退出登录" : "登录账户"}
-              onClick={() => {
-                if (user)
-                  void fetch("/api/auth/sign-out", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: "{}",
-                  }).then(() => setUser(null));
-                else setModal("auth");
-              }}
-            >
-              {user ? <LogOut size={16} /> : <Settings2 size={16} />}
-            </button>
+            {!BROWSER_ONLY && (
+              <button
+                className="icon-btn"
+                aria-label={user ? "退出登录" : "登录账户"}
+                onClick={() => {
+                  if (user)
+                    void fetch("/api/auth/sign-out", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: "{}",
+                    }).then(() => setUser(null));
+                  else setModal("auth");
+                }}
+              >
+                {user ? <LogOut size={16} /> : <Settings2 size={16} />}
+              </button>
+            )}
           </div>
         </div>
       </aside>
@@ -1229,19 +1240,21 @@ export default function Editor() {
                     onChange={(e) => patch({ body: e.target.value })}
                     placeholder="聊聊这段经历，补充简历上写不下的故事…"
                   />
-                  <button
-                    className="ai-button"
-                    onClick={() => {
-                      setAiDraft(null);
-                      setAiQuery(a.text || a.title);
-                      setAiContext(a.context);
-                      setModal("ai");
-                    }}
-                  >
-                    <Sparkles size={14} />
-                    AI 帮我补充
-                    <ArrowUpRight size={13} />
-                  </button>
+                  {!BROWSER_ONLY && (
+                    <button
+                      className="ai-button"
+                      onClick={() => {
+                        setAiDraft(null);
+                        setAiQuery(a.text || a.title);
+                        setAiContext(a.context);
+                        setModal("ai");
+                      }}
+                    >
+                      <Sparkles size={14} />
+                      AI 帮我补充
+                      <ArrowUpRight size={13} />
+                    </button>
+                  )}
                   <div className="field-divider" />
                   <div className="label-row">
                     <span className="field-label">图片与视频</span>
@@ -2075,10 +2088,12 @@ export default function Editor() {
                     </p>
                   </li>
                   <li>
-                    <strong>预览、导出或发布</strong>
+                    <strong>
+                      {BROWSER_ONLY ? "预览并导出" : "预览、导出或发布"}
+                    </strong>
                     <p>
-                      悬停预览。导出 HTML 可离线阅读；项目 ZIP
-                      可导回继续编辑。公开分享需作者账户。
+                      悬停预览。导出 HTML 可离线阅读；项目 ZIP 可导回继续编辑。
+                      {!BROWSER_ONLY && "公开分享需作者账户。"}
                     </p>
                   </li>
                 </ol>
