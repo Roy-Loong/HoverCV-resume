@@ -1659,8 +1659,8 @@ export default function Editor() {
                 </span>
                 <h2>把故事，带到更多地方</h2>
                 <p className="modal-description">
-                  PDF 保留点击跳转图文，HTML 保留悬浮体验。视频请选择 HTML
-                  或离线 ZIP。
+                  悬浮 PDF 保留原页数，在支持交互的阅读器内悬停查看图文。
+                  网页悬浮和视频仍可导出 HTML 或离线 ZIP。
                 </p>
                 <div className="export-options">
                   {project && <PdfDownloadOption project={project} />}

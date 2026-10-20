@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import {
+  PDFDocument,
+  PDFDict,
+  PDFName,
+  PDFNumber,
+  PDFString,
+  PDFRawStream,
+  StandardFonts,
+} from "pdf-lib";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { buildInteractivePdf, pdfLines, pdfText } from "../lib/pdf-export";
 import { bytesToData, newAnnotation, type Project } from "../lib/schema";
@@ -40,7 +48,13 @@ async function fontFetch() {
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
 }
-afterEach(() => vi.unstubAllGlobals());
+vi.mock("../lib/pdf-anchor-images", () => ({
+  pdfAnchorImages: vi.fn().mockResolvedValue([]),
+}));
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
 
 describe("可下载的交互 PDF", () => {
   it("转换兼容的偏旁和爱心，换行不丢失中英文字符", () => {
@@ -63,70 +77,92 @@ describe("可下载的交互 PDF", () => {
     expect(result.blob.type).toBe("application/pdf");
     expect(fetcher).not.toHaveBeenCalled();
   });
-  it("保留原始矢量正文和完整长中文内容，生成可解析的往返跳转与外部链接", async () => {
+  it("原页数和正文不变，长说明保留在隐藏卡片内，悬停、点击和外部链接均有效", async () => {
     await fontFetch();
-    const p = await fixture();
-    const a = newAnnotation(1, [[38, 695, 270, 725]], "原始正文", "text");
+    const p = await fixture(),
+      a = newAnnotation(1, [[38, 695, 270, 725]], "原始正文", "text");
     a.title = "项目图文详情";
     a.body =
       "中文项目开始\n" +
-      "这一段很长的中文说明用于核实跨页后没有丢失文字。".repeat(300) +
+      "这一段很长的中文说明用于核实卡片翻页后没有丢失文字。".repeat(200) +
       "\n最终结尾💗囍";
     a.links = [{ label: "查看项目", url: "https://example.com/project" }];
     a.citations = [{ title: "资料来源", url: "https://example.com/source" }];
     p.annotations = [a];
-    const before = JSON.stringify(p);
-    const result = await buildInteractivePdf(p);
+    const before = JSON.stringify(p),
+      result = await buildInteractivePdf(p);
     expect(JSON.stringify(p)).toBe(before);
+    expect(result.pages).toBe(1);
+    const doc = await PDFDocument.load(await result.blob.arrayBuffer());
+    expect(doc.getPageCount()).toBe(1);
+    const fields = doc.getForm().getFields(),
+      hover = fields.find((f) => f.getName().includes("_hover_"))!.acroField
+        .dict;
+    const enter = hover
+      .lookup(PDFName.of("AA"), PDFDict)
+      .lookup(PDFName.of("E"), PDFDict);
+    expect(enter.lookup(PDFName.of("S"), PDFName).asString()).toBe("/Hide");
+    expect(hover.get(PDFName.of("A"))).toBeDefined();
+    expect(hover.get(PDFName.of("Rect"))?.toString()).toBe(
+      "[ 37 694 271 726 ]",
+    );
+    const panels = fields.filter((f) => f.getName().includes("_panel_"));
+    expect(panels.length).toBeGreaterThan(5);
+    const uriFields = fields.filter((f) => f.getName().includes("_link_"));
+    expect(uriFields).toHaveLength(2);
+    expect(
+      uriFields[0].acroField.dict
+        .lookup(PDFName.of("A"), PDFDict)
+        .lookup(PDFName.of("URI"), PDFString)
+        .decodeText(),
+    ).toBe("https://example.com/project");
+    for (const f of fields.filter((f) => !f.getName().includes("_hover_")))
+      expect(
+        f.acroField.dict.lookup(PDFName.of("F"), PDFNumber).asNumber(),
+      ).toBe(2);
+    // Inspect appearance streams through PDF.js as temporary test pages. These
+    // pages are never part of the exported file.
+    for (const f of panels) {
+      const appearance = f.acroField.dict.lookup(PDFName.of("AP"), PDFDict),
+        ref = appearance.get(PDFName.of("N"))!;
+      const stream = doc.context.lookup(ref),
+        page = doc.addPage([286, 430]);
+      if (!(stream instanceof PDFRawStream))
+        throw Error("Missing appearance stream");
+      page.node.set(
+        PDFName.of("Resources"),
+        stream.dict.get(PDFName.of("Resources"))!,
+      );
+      page.node.set(PDFName.of("Contents"), ref);
+    }
     const task = getDocument({
-      data: new Uint8Array(await result.blob.arrayBuffer()),
-    });
-    const pdf = await task.promise;
+        data: await doc.save({ updateFieldAppearances: false }),
+      }),
+      pdf = await task.promise;
     try {
-      expect(pdf.numPages).toBeGreaterThan(4);
-      let text = "",
-        body = "",
-        links = 0,
-        external = 0;
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const content = await page.getTextContent();
-        const pageText = content.items
-          .map((item) => ("str" in item ? item.str : ""))
+      const source = await (await pdf.getPage(1)).getTextContent();
+      expect(source.items.map((x) => ("str" in x ? x.str : "")).join("")).toBe(
+        "Original vector resume",
+      );
+      let text = "";
+      for (let i = 2; i <= pdf.numPages; i++) {
+        const content = await (await pdf.getPage(i)).getTextContent();
+        text += content.items
+          .filter(
+            (x) => "str" in x && x.transform[5] > 47 && x.transform[5] < 380,
+          )
+          .map((x) => ("str" in x ? x.str : ""))
           .join("");
-        text += pageText;
-        if (i >= 3)
-          body += content.items
-            .filter(
-              (item) =>
-                "str" in item &&
-                item.transform[5] >= 112 &&
-                item.transform[5] <= 692,
-            )
-            .map((item) => ("str" in item ? item.str : ""))
-            .join("");
-        if (i === 1) expect(pageText).toContain("Original vector resume");
-        for (const note of await page.getAnnotations()) {
-          if (note.dest) {
-            const target = await pdf.getPageIndex(note.dest[0]);
-            expect(target).toBeGreaterThanOrEqual(0);
-            expect(target).toBeLessThan(pdf.numPages);
-            links++;
-          }
-          if (note.url) external++;
-        }
       }
-      expect(text).toContain("中文项目开始");
-      expect(text).toContain("最终结尾♥囍");
-      expect(body).toContain(pdfText(a.body).replace(/\n/g, ""));
-      expect(links).toBeGreaterThanOrEqual(5);
-      expect(external).toBe(2);
-      expect(await pdf.getJSActions()).toBeNull();
+      expect(text.includes(pdfText(a.body).replace(/\n/g, ""))).toBe(true);
+      expect(
+        [...((await pdf.getJSActions())?.values() || [])].flat().join(""),
+      ).toContain('setTimeOut("HC_hide();",150)');
     } finally {
       await task.destroy();
     }
   }, 30000);
-  it("多个目录页互通，每个条目都有详情目的地", async () => {
+  it("多注释共用原页，不生成跳页；切换标注隐藏其它卡片且关闭按钮位于卡片上层", async () => {
     await fontFetch();
     const p = await fixture();
     p.annotations = Array.from({ length: 13 }, (_, i) =>
@@ -137,20 +173,77 @@ describe("可下载的交互 PDF", () => {
         "area",
       ),
     );
-    const result = await buildInteractivePdf(p);
-    const task = getDocument({
-      data: new Uint8Array(await result.blob.arrayBuffer()),
-    });
-    const pdf = await task.promise;
-    try {
-      expect(pdf.numPages).toBe(16);
-      const first = await (await pdf.getPage(2)).getAnnotations();
-      const second = await (await pdf.getPage(3)).getAnnotations();
-      expect(first.filter((n) => n.dest)).toHaveLength(14);
-      expect(second.filter((n) => n.dest)).toHaveLength(3);
-    } finally {
-      await task.destroy();
+    const result = await buildInteractivePdf(p),
+      doc = await PDFDocument.load(await result.blob.arrayBuffer());
+    expect(doc.getPageCount()).toBe(1);
+    const fields = doc.getForm().getFields();
+    expect(fields.filter((f) => f.getName().endsWith("_close"))).toHaveLength(
+      13,
+    );
+    for (const f of fields.filter((f) => f.getName().includes("_panel_")))
+      expect(
+        f.acroField.dict.lookup(PDFName.of("Ff"), PDFNumber).asNumber() & 1,
+      ).toBe(1);
+    const annotations = doc.getPage(0).node.Annots()!;
+    const names = Array.from({ length: annotations.size() }, (_, i) =>
+      annotations
+        .lookup(i, PDFDict)
+        .lookup(PDFName.of("T"), PDFString)
+        .decodeText(),
+    );
+    expect(names.slice(0, 13).every((n) => n.includes("_hover_"))).toBe(true);
+    expect(names.slice(13, 26).every((n) => n.includes("_panel_"))).toBe(true);
+    expect(
+      names
+        .slice(26)
+        .every((n) => n.endsWith("_close") || n.includes("_keep_")),
+    ).toBe(true);
+    for (const f of fields.filter((f) => f.getName().includes("_hover_"))) {
+      const action = f.acroField.dict
+        .lookup(PDFName.of("AA"), PDFDict)
+        .lookup(PDFName.of("E"), PDFDict);
+      expect(action.get(PDFName.of("T"))?.toString().split("HC").length).toBe(
+        fields.filter((f) => !f.getName().includes("_hover_")).length + 1,
+      );
     }
+    const controls = fields.filter((f) => f.getName().endsWith("_close"));
+    for (const f of fields.filter((f) => f.getName().includes("_keep_"))) {
+      const area = f.acroField.getWidgets()[0].getRectangle();
+      for (const c of controls.filter(
+        (c) => c.getName().split("_")[1] === f.getName().split("_")[1],
+      )) {
+        const button = c.acroField.getWidgets()[0].getRectangle();
+        expect(
+          Math.min(area.x + area.width, button.x + button.width) <=
+            Math.max(area.x, button.x) ||
+            Math.min(area.y + area.height, button.y + button.height) <=
+              Math.max(area.y, button.y),
+        ).toBe(true);
+      }
+    }
+  });
+  it("原文件的表单字段和值仍然保留", async () => {
+    await fontFetch();
+    const p = await fixture(),
+      doc = await PDFDocument.load(
+        Buffer.from(p.pdfData.split(",")[1], "base64"),
+      );
+    const original = doc.getForm().createTextField("existing");
+    original.setText("Original value");
+    original.addToPage(doc.getPage(0), {
+      x: 30,
+      y: 30,
+      width: 100,
+      height: 20,
+    });
+    p.pdfData = bytesToData(await doc.save(), "application/pdf");
+    p.annotations = [newAnnotation(1, [[38, 695, 270, 725]], "项目", "text")];
+    const result = await buildInteractivePdf(p),
+      saved = await PDFDocument.load(await result.blob.arrayBuffer());
+    expect(saved.getForm().getTextField("existing").getText()).toBe(
+      "Original value",
+    );
+    expect(saved.getPageCount()).toBe(1);
   });
   it("字体加载失败可重试，视频和不支持的字符明确报错而非遗漏", async () => {
     const p = await fixture();

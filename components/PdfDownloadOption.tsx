@@ -57,7 +57,7 @@ export default function PdfDownloadOption({ project }: { project: Project }) {
         >
           <ArrowDownToLine />
           <div>
-            <strong>下载交互 PDF</strong>
+            <strong>下载悬浮交互 PDF</strong>
             <p>
               已生成 · {result.pages} 页 ·{" "}
               {(result.size / 1024 / 1024).toFixed(1)} MB · 点击保存到电脑
@@ -69,9 +69,10 @@ export default function PdfDownloadOption({ project }: { project: Project }) {
         <button onClick={() => void prepare()} disabled={!!progress}>
           {progress ? <Loader2 className="spin" /> : <FileText />}
           <div>
-            <strong>{progress ? "正在生成交互 PDF" : "交互 PDF"}</strong>
+            <strong>{progress ? "正在生成悬浮 PDF" : "悬浮交互 PDF"}</strong>
             <p>
-              {progress || "点击彩色文字查看图文、返回简历，便于作为文件转发"}
+              {progress ||
+                "保留原页数 · 悬停看图文、翻图与关闭 · 需阅读器支持表单交互"}
             </p>
           </div>
           <ArrowDownToLine size={17} />
@@ -84,8 +85,9 @@ export default function PdfDownloadOption({ project }: { project: Project }) {
       )}
       {result && (
         <p className="pdf-export-hint" role="status">
-          PDF 已在浏览器内生成。点击上方“下载交互
-          PDF”即可保存；微信内预览可能限制跳转，可用 WPS 或 Acrobat 打开。
+          PDF 已在浏览器内生成。点击上方“下载悬浮交互 PDF”保存，可通过微信发送。
+          请在支持 PDF 表单交互的 WPS / Acrobat
+          桌面版阅读；微信内置预览和手机端不保证悬停效果。
         </p>
       )}
     </>
