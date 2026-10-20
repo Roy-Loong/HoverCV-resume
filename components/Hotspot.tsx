@@ -42,6 +42,7 @@ export default function Hotspot({
     [index, setIndex] = useState(0),
     [paused, setPaused] = useState(false);
   const video = useRef<HTMLVideoElement>(null);
+  const touch = useRef(false);
   const { refs, floatingStyles, context } = useFloating({
     open,
     onOpenChange(v) {
@@ -67,6 +68,7 @@ export default function Hotspot({
     ],
   });
   const hover = useHover(context, {
+      mouseOnly: true,
       delay: { open: HOVER_OPEN_MS, close: HOVER_CLOSE_MS },
       handleClose: safePolygon({ buffer: 8, requireIntent: false }),
       move: false,
@@ -158,11 +160,18 @@ export default function Hotspot({
       <button
         ref={refs.setReference}
         {...getReferenceProps({
-          onClick: () => {
-            window.dispatchEvent(
-              new CustomEvent("hovercv:card-open", { detail: instanceId }),
-            );
-            setOpen(true);
+          onPointerDown: (e) => {
+            touch.current = e.pointerType === "touch";
+          },
+          onClick: (e) => {
+            if (touch.current)
+              context.onOpenChange(true, e.nativeEvent, "click");
+            else {
+              window.dispatchEvent(
+                new CustomEvent("hovercv:card-open", { detail: instanceId }),
+              );
+              setOpen(true);
+            }
             onEdit?.();
           },
         })}

@@ -10,7 +10,12 @@ import {
   StandardFonts,
 } from "pdf-lib";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { buildInteractivePdf, pdfLines, pdfText } from "../lib/pdf-export";
+import {
+  buildInteractivePdf,
+  pdfCardAnchors,
+  pdfLines,
+  pdfText,
+} from "../lib/pdf-export";
 import { bytesToData, newAnnotation, type Project } from "../lib/schema";
 
 async function fixture(): Promise<Project> {
@@ -66,6 +71,22 @@ describe("可下载的交互 PDF", () => {
       "第二行",
     ]);
   });
+  it("同一行相邻汉字和重叠偏旁共用触发区，跨行或远距离文字仍各自就近定位", () => {
+    expect(
+      pdfCardAnchors([
+        [20, 100, 50, 114],
+        [49, 100, 55, 114],
+        [52, 98, 65, 116],
+        [64, 98, 70, 116],
+        [20, 60, 60, 74],
+        [200, 100, 240, 114],
+      ]),
+    ).toEqual([
+      [20, 98, 70, 116],
+      [20, 60, 60, 74],
+      [200, 100, 240, 114],
+    ]);
+  });
   it("无注释时原样交付原 PDF，无需字体或网络", async () => {
     const p = await fixture();
     const fetcher = vi.fn();
@@ -106,10 +127,10 @@ describe("可下载的交互 PDF", () => {
     expect(hover.get(PDFName.of("Rect"))?.toString()).toBe(
       "[ 37 694 271 726 ]",
     );
-    const panels = fields.filter((f) => f.getName().includes("_panel_"));
+    const panels = fields.filter((f) => f.getName().includes("_h_panel_"));
     expect(panels.length).toBeGreaterThan(5);
     const uriFields = fields.filter((f) => f.getName().includes("_link_"));
-    expect(uriFields).toHaveLength(2);
+    expect(uriFields).toHaveLength(4);
     expect(
       uriFields[0].acroField.dict
         .lookup(PDFName.of("A"), PDFDict)
@@ -126,7 +147,7 @@ describe("可下载的交互 PDF", () => {
       const appearance = f.acroField.dict.lookup(PDFName.of("AP"), PDFDict),
         ref = appearance.get(PDFName.of("N"))!;
       const stream = doc.context.lookup(ref),
-        page = doc.addPage([286, 430]);
+        page = doc.addPage([260, 360]);
       if (!(stream instanceof PDFRawStream))
         throw Error("Missing appearance stream");
       page.node.set(
@@ -149,7 +170,7 @@ describe("可下载的交互 PDF", () => {
         const content = await (await pdf.getPage(i)).getTextContent();
         text += content.items
           .filter(
-            (x) => "str" in x && x.transform[5] > 47 && x.transform[5] < 380,
+            (x) => "str" in x && x.transform[5] > 47 && x.transform[5] < 310,
           )
           .map((x) => ("str" in x ? x.str : ""))
           .join("");
@@ -178,7 +199,7 @@ describe("可下载的交互 PDF", () => {
     expect(doc.getPageCount()).toBe(1);
     const fields = doc.getForm().getFields();
     expect(fields.filter((f) => f.getName().endsWith("_close"))).toHaveLength(
-      13,
+      26,
     );
     for (const f of fields.filter((f) => f.getName().includes("_panel_")))
       expect(
@@ -192,10 +213,10 @@ describe("可下载的交互 PDF", () => {
         .decodeText(),
     );
     expect(names.slice(0, 13).every((n) => n.includes("_hover_"))).toBe(true);
-    expect(names.slice(13, 26).every((n) => n.includes("_panel_"))).toBe(true);
+    expect(names.slice(13, 39).every((n) => n.includes("_panel_"))).toBe(true);
     expect(
       names
-        .slice(26)
+        .slice(39)
         .every((n) => n.endsWith("_close") || n.includes("_keep_")),
     ).toBe(true);
     for (const f of fields.filter((f) => f.getName().includes("_hover_"))) {
@@ -220,6 +241,54 @@ describe("可下载的交互 PDF", () => {
               Math.max(area.y, button.y),
         ).toBe(true);
       }
+    }
+  });
+  it("每个文字片段独立在右侧就近打开，卡片统一尺寸、复用图文外观并具备原生退出动作", async () => {
+    await fontFetch();
+    const p = await fixture();
+    p.annotations = [
+      newAnnotation(
+        1,
+        [
+          [30, 690, 150, 710],
+          [45, 420, 175, 440],
+        ],
+        "分段标注",
+        "text",
+      ),
+    ];
+    const result = await buildInteractivePdf(p),
+      doc = await PDFDocument.load(await result.blob.arrayBuffer());
+    const fields = doc.getForm().getFields(),
+      hits = fields.filter((f) => f.getName().includes("_hover_")),
+      panels = fields.filter((f) => f.getName().includes("_h_panel_"));
+    expect(hits).toHaveLength(2);
+    expect(panels).toHaveLength(2);
+    expect(
+      panels.map((f) => f.acroField.getWidgets()[0].getRectangle()),
+    ).toEqual([
+      { x: 156, y: 354, width: 260, height: 360 },
+      { x: 181, y: 84, width: 260, height: 360 },
+    ]);
+    expect(
+      panels[0].acroField.dict
+        .lookup(PDFName.of("AP"), PDFDict)
+        .get(PDFName.of("N"))
+        ?.toString(),
+    ).toBe(
+      panels[1].acroField.dict
+        .lookup(PDFName.of("AP"), PDFDict)
+        .get(PDFName.of("N"))
+        ?.toString(),
+    );
+    for (const hit of hits) {
+      const actions = hit.acroField.dict.lookup(PDFName.of("AA"), PDFDict),
+        exit = actions.lookup(PDFName.of("X"), PDFDict);
+      expect(exit.lookup(PDFName.of("S"), PDFName).asString()).toBe("/Hide");
+      expect(exit.lookup(PDFName.of("H"))?.toString()).toBe("true");
+      expect(hit.acroField.dict.get(PDFName.of("A"))?.toString()).not.toBe(
+        actions.get(PDFName.of("E"))?.toString(),
+      );
     }
   });
   it("原文件的表单字段和值仍然保留", async () => {

@@ -72,7 +72,7 @@ export default function PdfDownloadOption({ project }: { project: Project }) {
             <strong>{progress ? "正在生成悬浮 PDF" : "悬浮交互 PDF"}</strong>
             <p>
               {progress ||
-                "保留原页数 · 悬停看图文、翻图与关闭 · 需阅读器支持表单交互"}
+                "统一卡片，就近展开 · 悬停查看、点击固定 · 需支持表单交互"}
             </p>
           </div>
           <ArrowDownToLine size={17} />
@@ -86,8 +86,10 @@ export default function PdfDownloadOption({ project }: { project: Project }) {
       {result && (
         <p className="pdf-export-hint" role="status">
           PDF 已在浏览器内生成。点击上方“下载悬浮交互 PDF”保存，可通过微信发送。
-          请在支持 PDF 表单交互的 WPS / Acrobat
-          桌面版阅读；微信内置预览和手机端不保证悬停效果。
+          电脑悬停查看，移开约 150
+          毫秒关闭（不支持计时脚本时直接关闭）；单击文字可固定卡片，再翻图或点 ×
+          关闭。 手机请点击彩色文字；部分手机阅读器不执行 PDF
+          表单事件，可另附下方的“手机阅读链接”。
         </p>
       )}
     </>

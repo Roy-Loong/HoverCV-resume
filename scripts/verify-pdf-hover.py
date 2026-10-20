@@ -72,39 +72,47 @@ try:
         snapshot("idle")
         for ordinal, (group, hits) in enumerate(groups.items()):
             _, hit = hits[0]
-            panels = [name for name in by_name if name.startswith(group+"_panel_")]
-            expected = group+"_panel_0"
+            panels = [name for name in by_name if name.startswith(group+"_h_panel_")]
+            expected = group+"_h_panel_0"
             pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
             move(hit)
-            assert visible_panels() == [expected], f"MouseEnter failed for note {ordinal+1}: {visible_panels()}"
+            assert visible_panels() == [expected], f"MouseEnter failed for fragment {ordinal+1}: {visible_panels()}"
             report["hover"] += 1
-            snapshot(f"note-{ordinal+1}-hover")
-            for frame in range(1, len(panels)):
-                click(by_name[f"{group}_{frame-1}_next"][1])
-                assert visible_panels() == [f"{group}_panel_{frame}"], "Next did not switch the visible card"
-                report["next"] += 1
-                snapshot(f"note-{ordinal+1}-frame-{frame+1}")
-            for frame in reversed(range(1, len(panels))):
-                click(by_name[f"{group}_{frame}_prev"][1])
-                assert visible_panels() == [f"{group}_panel_{frame-1}"], "Previous did not restore the prior card"
-                report["previous"] += 1
-            click(by_name[group+"_close"][1])
-            assert visible_panels() == [], "Close button did not hide the card"
-            report["close"] += 1
+            snapshot(f"fragment-{ordinal+1}-hover")
+            # This host has no Acrobat JavaScript/timers. MouseExit must still
+            # close natively instead of leaving the card stuck open.
+            pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
+            assert not visible_panels(), "Native MouseExit fallback did not close"
+            report["native_exit"] = report.get("native_exit", 0)+1
+            # In readers without JavaScript/timers, hover closes immediately.
+            # Click the word to pin its card before navigating its controls.
+            for mode in ["t"]:
+                pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
+                if mode=="t":
+                    click(hit)
+                    pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
+                    assert visible_panels() == [group+"_t_panel_0"], "Tap must stay open after pointer exit"
+                    report["tap"] = report.get("tap", 0)+1
+                else:move(hit)
+                for frame in range(1, len(panels)):
+                    click(by_name[f"{group}_{mode}_{frame-1}_next"][1])
+                    assert visible_panels() == [f"{group}_{mode}_panel_{frame}"], f"Next did not switch {mode} card {ordinal+1}: {visible_panels()}"
+                    report["next"] += 1
+                    snapshot(f"fragment-{ordinal+1}-{mode}-frame-{frame+1}")
+                for frame in reversed(range(1, len(panels))):
+                    click(by_name[f"{group}_{mode}_{frame}_prev"][1])
+                    assert visible_panels() == [f"{group}_{mode}_panel_{frame-1}"], f"Previous did not restore {mode} card {ordinal+1}: {visible_panels()}"
+                    report["previous"] += 1
+                click(by_name[f"{group}_{mode}_0_close"][1])
+                assert not visible_panels(), f"Close button did not hide {mode} card"
+                report["close"] += 1
             pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
             move(hit)
             assert visible_panels() == [expected], "Card could not reopen after closing"
             report["reopen"] += 1
-            click(by_name[group+"_close"][1])
+            click(by_name[group+"_h_0_close"][1])
             assert not visible_panels()
             report["anchors"] += 1
-            for _, other_hit in hits[1:]:
-                pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
-                move(other_hit)
-                assert visible_panels() == [expected], "One text fragment did not open its card"
-                click(by_name[group+"_close"][1])
-                assert not visible_panels()
-                report["anchors"] += 1
             report["notes"] += 1
             report["frames"] += len(panels)
         page.close()

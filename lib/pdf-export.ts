@@ -2,7 +2,6 @@ import {
   PDFDict,
   PDFArray,
   PDFHexString,
-  PDFNumber,
   degrees,
   type PDFRef,
   PDFDocument,
@@ -25,6 +24,7 @@ import {
   type Project,
 } from "./schema";
 import { imageLayout } from "./media-layout";
+import { pdfHoverRuntime } from "./pdf-hover-runtime";
 
 export type PdfProgress = (message: string) => void;
 const ACCENT = "#6099a9",
@@ -69,6 +69,37 @@ export function pdfLines(
     lines.push(line);
   }
   return lines;
+}
+
+/** Adjacent glyph/radical boxes on the same line share one native trigger.
+ * Some CJK PDFs split even one character into overlapping text rectangles.
+ */
+export function pdfCardAnchors(rects: Annotation["rects"]) {
+  const out: number[][] = [];
+  for (const rect of rects) {
+    let merged: number[] = [...rect];
+    for (let i = 0; i < out.length;) {
+      const r = out[i],
+        overlap = Math.min(r[3], merged[3]) - Math.max(r[1], merged[1]),
+        minHeight = Math.min(r[3] - r[1], merged[3] - merged[1]);
+      if (
+        overlap >= minHeight * 0.55 &&
+        merged[0] <= r[2] + 3 &&
+        merged[2] >= r[0] - 3
+      ) {
+        merged = [
+          Math.min(r[0], merged[0]),
+          Math.min(r[1], merged[1]),
+          Math.max(r[2], merged[2]),
+          Math.max(r[3], merged[3]),
+        ];
+        out.splice(i, 1);
+        i = 0;
+      } else i++;
+    }
+    out.push(merged);
+  }
+  return out;
 }
 
 async function photoBytes(media: Media, signal?: AbortSignal) {
@@ -166,7 +197,24 @@ export async function buildInteractivePdf(
   form.acroForm.dict.set(PDFName.of("NeedAppearances"), doc.context.obj(false));
   const prefix = `HC${crypto.randomUUID().replaceAll("-", "")}_`;
   const records: { page: PDFPage; field: PDFDict; name: string }[] = [];
-  const groups: { page: PDFPage; all: string[]; frames: string[][] }[] = [];
+  type Mode = "h" | "t";
+  type Group = {
+    page: PDFPage;
+    all: string[];
+    h: string[][];
+    t: string[][];
+    hit: string;
+    controls: {
+      field: PDFDict;
+      mode: Mode;
+      frame: number;
+      target?: number;
+      close?: boolean;
+    }[];
+  };
+  const groups: Group[] = [];
+  // A shared bootstrap also initializes readers that skip document-level JS.
+  const bootstrap = doc.context.register(doc.context.obj({ S: "JavaScript" }));
   const empty = doc.context.register(
     doc.context.flateStream("q Q", {
       Type: "XObject",
@@ -184,9 +232,16 @@ export async function buildInteractivePdf(
       ...(next ? { Next: next } : {}),
     });
   const js = (script: string) =>
-    doc.context.obj({ S: "JavaScript", JS: PDFString.of(script) });
-  const enter = js("HC_keep();"),
-    exit = js("HC_leave();");
+    doc.context.obj({
+      S: "JavaScript",
+      JS: PDFString.of(script),
+    });
+  const run = (script: string) =>
+    doc.context.obj({
+      S: "JavaScript",
+      JS: PDFString.of(""),
+      Next: [bootstrap, js(script)],
+    });
   function widget(
     page: PDFPage,
     name: string,
@@ -333,16 +388,21 @@ export async function buildInteractivePdf(
       ].filter((s) => s[2] - s[0] > 0.1 && s[3] - s[1] > 0.1);
     });
   }
+  // One document-wide size, including mixed page sizes. Never move a card to
+  // a distant page corner just to avoid another annotation.
+  const w = Math.min(260, ...originals.map((p) => p.getCropBox().width - 16)),
+    h = Math.min(360, ...originals.map((p) => p.getCropBox().height - 16));
+  if (w < 130 || h < 160)
+    throw Error("这份 PDF 页面过小，无法放置可阅读的悬浮卡片。");
+  const closeAp = await buttonAppearance("×", 22, 22),
+    prevAp = await buttonAppearance("← 上一项", 72, 22),
+    nextAp = await buttonAppearance("下一项 →", 72, 22);
   for (let i = 0; i < p.annotations.length; i++) {
     signal?.throwIfAborted();
     const a = p.annotations[i],
       page = originals[a.page - 1],
       crop = page.getCropBox();
     progress(`正在生成悬浮卡片 ${i + 1} / ${p.annotations.length}`);
-    const w = Math.min(286, crop.width * 0.45),
-      h = Math.min(430, crop.height - 24);
-    if (w < 130 || h < 160)
-      throw Error("这份 PDF 页面过小，无法放置可阅读的悬浮卡片。");
     const fullTitle = pdfLines(a.title, font, 14, w - 48),
       title = fullTitle.slice(0, 2);
     if (fullTitle.length > 2) title[1] += "…";
@@ -375,90 +435,11 @@ export async function buildInteractivePdf(
         slides.push({ rows: rows.slice(start, start + capacity) });
       for (const media of a.media) slides.push({ rows: [], media });
     }
-    const anchor = a.rects[0],
-      right = anchor[2] + 7,
-      left = anchor[0] - w - 7;
-    const preferredX =
-      right + w <= crop.x + crop.width - 8
-        ? right
-        : left >= crop.x + 8
-          ? left
-          : Math.max(crop.x + 8, crop.x + crop.width - w - 8);
-    const preferredY = Math.min(
-      crop.y + crop.height - h - 8,
-      Math.max(crop.y + 8, anchor[3] - h),
-    );
-    // Avoid placing the card's controls over other source hotspots. Some
-    // readers can still dispatch events to form controls behind a popup.
-    const anchors = p.annotations
-      .filter((note) => note.page === a.page)
-      .flatMap((note) => note.rects);
-    const overlap = (r: number[], s: number[]) =>
-      Math.max(0, Math.min(r[2], s[2]) - Math.max(r[0], s[0])) *
-      Math.max(0, Math.min(r[3], s[3]) - Math.max(r[1], s[1]));
-    const xs = [preferredX, crop.x + 8, crop.x + crop.width - w - 8].filter(
-      (v, j, all) => all.indexOf(v) === j,
-    );
-    const ys = [
-      preferredY,
-      crop.y + 8,
-      crop.y + crop.height - h - 8,
-      Math.min(
-        crop.y + crop.height - h - 8,
-        Math.max(crop.y + 8, anchor[1] - h - 7),
-      ),
-    ];
-    let x = preferredX,
-      y = preferredY,
-      best = Infinity;
-    for (const cx of xs)
-      for (const cy of ys) {
-        const card = [cx, cy, cx + w, cy + h],
-          controls = [
-            [cx + w - 30, cy + h - 30, cx + w - 8, cy + h - 8],
-            [cx + 14, cy + 12, cx + 86, cy + 34],
-            [cx + w - 86, cy + 12, cx + w - 14, cy + 34],
-          ];
-        const score =
-          anchors.reduce(
-            (sum, r) =>
-              sum +
-              overlap(card, r) * 10 +
-              controls.reduce((v, c) => v + overlap(c, r) * 1000, 0),
-            0,
-          ) +
-          ((cx - preferredX) ** 2 + (cy - preferredY) ** 2) * 0.01;
-        if (score < best) {
-          best = score;
-          x = cx;
-          y = cy;
-        }
-      }
-    const rect = [x, y, x + w, y + h],
-      group = { page, all: [] as string[], frames: [] as string[][] };
-    groups.push(group);
-    const closeName = `${prefix}${i}_close`,
-      closeW = 22,
-      closeH = 22;
-    const closeRect = [x + w - 30, y + h - 30, x + w - 8, y + h - 8];
-    group.all.push(closeName);
-    const close = widget(
-      page,
-      closeName,
-      closeRect,
-      await buttonAppearance("×", closeW, closeH),
-      true,
-      "关闭注释",
-    );
-    close.set(PDFName.of("AA"), doc.context.obj({ E: enter, X: exit }));
+    // Reuse the same form appearances for every fragment and click/hover mode;
+    // duplicating the widgets must not duplicate photos or embedded fonts.
+    const appearances: PDFRef[] = [];
     for (let s = 0; s < slides.length; s++) {
-      signal?.throwIfAborted();
-      const slide = slides[s],
-        names = [closeName],
-        panelName = `${prefix}${i}_panel_${s}`;
-      const holes = [closeRect];
-      names.push(panelName);
-      group.all.push(panelName);
+      const slide = slides[s];
       const ap = await appearance(w, h, async (canvas) => {
         canvas.drawRectangle({
           x: 0.5,
@@ -500,131 +481,127 @@ export async function buildInteractivePdf(
           MUTED,
         );
       });
-      const panel = widget(page, panelName, rect, ap, true, a.title);
-      // A full-card editable button can intercept clicks on its own controls
-      // in PDFium. The visual panel is read-only; separate empty hit regions
-      // keep it open without covering the close/arrow/link buttons.
-      panel.set(PDFName.of("Ff"), doc.context.obj(65537));
-      for (let r = 0; r < slide.rows.length; r++)
-        if (slide.rows[r].url) {
-          const name = `${prefix}${i}_${s}_link_${r}`;
-          names.push(name);
-          group.all.push(name);
-          const field = widget(
+      appearances.push(ap);
+    }
+    for (const anchor of pdfCardAnchors(a.rects)) {
+      const id = groups.length,
+        right = anchor[2] + 6,
+        left = anchor[0] - w - 6;
+      const fitsRight = right + w <= crop.x + crop.width - 8,
+        fitsLeft = left >= crop.x + 8;
+      const x = fitsRight
+        ? right
+        : fitsLeft
+          ? left
+          : Math.max(crop.x + 8, crop.x + crop.width - w - 8);
+      let y = Math.max(
+        crop.y + 8,
+        Math.min(anchor[3] + 4 - h, crop.y + crop.height - h - 8),
+      );
+      // At a page edge, stay on the original page without covering the source
+      // word or moving to a distant corner. A very long line uses the space
+      // directly below/above instead of obscuring its own click trigger.
+      if (!fitsRight && !fitsLeft) {
+        if (anchor[1] - 6 - h >= crop.y + 8) y = anchor[1] - 6 - h;
+        else if (anchor[3] + 6 + h <= crop.y + crop.height - 8)
+          y = anchor[3] + 6;
+      }
+      const rect = [x, y, x + w, y + h],
+        group: Group = {
+          page,
+          all: [],
+          h: [],
+          t: [],
+          hit: `${prefix}${id}_hover_0`,
+          controls: [],
+        };
+      groups.push(group);
+      for (const mode of ["h", "t"] as const)
+        for (let frame = 0; frame < slides.length; frame++) {
+          const names: string[] = [],
+            holes: number[][] = [];
+          const add = (
+            suffix: string,
+            r: number[],
+            ap: PDFRef,
+            label: string,
+          ) => {
+            const name = `${prefix}${id}_${mode}_${suffix}`;
+            names.push(name);
+            group.all.push(name);
+            const field = widget(page, name, r, ap, true, label);
+            group.controls.push({ field, mode, frame });
+            return field;
+          };
+          const panelName = `${prefix}${id}_${mode}_panel_${frame}`;
+          names.push(panelName);
+          group.all.push(panelName);
+          const panel = widget(
             page,
-            name,
-            [
+            panelName,
+            rect,
+            appearances[frame],
+            true,
+            a.title,
+          );
+          panel.set(PDFName.of("Ff"), doc.context.obj(65537));
+          const closeRect = [x + w - 30, y + h - 30, x + w - 8, y + h - 8];
+          holes.push(closeRect);
+          add(`${frame}_close`, closeRect, closeAp, "关闭注释");
+          group.controls.at(-1)!.close = true;
+          for (let r = 0; r < slides[frame].rows.length; r++) {
+            const row = slides[frame].rows[r];
+            if (!row.url) continue;
+            const linkRect = [
               x + 14,
               y + h - top - r * 14 - 14,
               x + w - 14,
               y + h - top - r * 14 + 1,
-            ],
-            empty,
-            true,
-            slide.rows[r].text,
-          );
-          holes.push([
-            x + 14,
-            y + h - top - r * 14 - 14,
-            x + w - 14,
-            y + h - top - r * 14 + 1,
-          ]);
-          field.set(
-            PDFName.of("A"),
-            doc.context.obj({
-              S: "URI",
-              URI: PDFString.of(new URL(slide.rows[r].url!).href),
-            }),
-          );
-          field.set(PDFName.of("AA"), doc.context.obj({ E: enter, X: exit }));
+            ];
+            holes.push(linkRect);
+            add(`${frame}_link_${r}`, linkRect, empty, row.text).set(
+              PDFName.of("A"),
+              doc.context.obj({
+                S: "URI",
+                URI: PDFString.of(new URL(row.url).href),
+              }),
+            );
+          }
+          if (slides.length > 1)
+            for (const [direction, label, bx, ap] of [
+              [-1, "← 上一项", x + 14, prevAp],
+              [1, "下一项 →", x + w - 86, nextAp],
+            ] as const) {
+              const r = [bx, y + 12, bx + 72, y + 34];
+              holes.push(r);
+              add(`${frame}_${direction < 0 ? "prev" : "next"}`, r, ap, label);
+              group.controls.at(-1)!.target =
+                (frame + direction + slides.length) % slides.length;
+            }
+          let keepers = [rect];
+          for (const hole of holes) keepers = cutOut(keepers, hole);
+          // The bridge keeps the 150 ms hover transition close to its word.
+          // Without scripting, click the word to pin before using controls.
+          if (x > anchor[2])
+            keepers.push([
+              anchor[2],
+              Math.max(y, anchor[1] - 1),
+              x,
+              Math.min(y + h, anchor[3] + 1),
+            ]);
+          for (let k = 0; k < keepers.length; k++)
+            if (keepers[k][2] > keepers[k][0] && keepers[k][3] > keepers[k][1])
+              add(`${frame}_keep_${k}`, keepers[k], empty, "");
+          group[mode].push(names);
         }
-      if (slides.length > 1)
-        for (const [direction, label, bx] of [
-          [-1, "← 上一项", x + 14],
-          [1, "下一项 →", x + w - 86],
-        ] as const) {
-          const name = `${prefix}${i}_${s}_${direction < 0 ? "prev" : "next"}`;
-          names.push(name);
-          group.all.push(name);
-          const field = widget(
-            page,
-            name,
-            [bx, y + 12, bx + 72, y + 34],
-            await buttonAppearance(label, 72, 22),
-            true,
-            label,
-          );
-          holes.push([bx, y + 12, bx + 72, y + 34]);
-          field.set(PDFName.of("AA"), doc.context.obj({ E: enter, X: exit }));
-          // Resolve after every frame name is known; no JavaScript is needed to flip.
-          field.set(
-            PDFName.of("HCtarget"),
-            doc.context.obj((s + direction + slides.length) % slides.length),
-          );
-        }
-      let keepers = [rect];
-      for (const hole of holes) keepers = cutOut(keepers, hole);
-      for (let k = 0; k < keepers.length; k++) {
-        const name = `${prefix}${i}_${s}_keep_${k}`;
-        names.push(name);
-        group.all.push(name);
-        const keeper = widget(page, name, keepers[k], empty, true, "");
-        keeper.set(PDFName.of("AA"), doc.context.obj({ E: enter, X: exit }));
-      }
-      group.frames.push(names);
-    }
-    const show = (s: number) =>
-      hide(group.all, true, hide(group.frames[s], false, js("HC_keep();")));
-    for (const record of records.filter((r) => group.all.includes(r.name))) {
-      const target = record.field.lookupMaybe(
-        PDFName.of("HCtarget"),
-        PDFNumber,
+      widget(
+        page,
+        group.hit,
+        [anchor[0] - 1, anchor[1] - 1, anchor[2] + 1, anchor[3] + 1],
+        empty,
+        false,
+        `${a.title}：悬停查看，单击固定，×关闭`,
       );
-      if (target) {
-        const frame = target.asNumber(),
-          direction = record.name.endsWith("_prev") ? "prev" : "next";
-        const focusName = `${prefix}${i}_${frame}_${direction}`;
-        // Some readers retain focus on the button just hidden by a flip.
-        // When scripting is available, move it to the new visible button.
-        record.field.set(
-          PDFName.of("A"),
-          hide(
-            group.all,
-            true,
-            hide(
-              group.frames[frame],
-              false,
-              js(
-                `HC_keep();try{this.getField(${JSON.stringify(focusName)}).setFocus();}catch(e){}`,
-              ),
-            ),
-          ),
-        );
-        record.field.delete(PDFName.of("HCtarget"));
-      }
-    }
-    close.set(PDFName.of("A"), hide(group.all, true, js("HC_keep();")));
-    // Transparent anchors go first in the annotation array, below the cards.
-    for (let n = 0; n < a.rects.length; n++) {
-      const r = a.rects[n],
-        hit = widget(
-          page,
-          `${prefix}${i}_hover_${n}`,
-          [r[0] - 1, r[1] - 1, r[2] + 1, r[3] + 1],
-          empty,
-          false,
-          `${a.title}：悬停或单击查看图文`,
-        );
-      const open = hide(
-        groups.filter((g) => g.page === page).flatMap((g) => g.all),
-        true,
-        show(0),
-      );
-      hit.set(
-        PDFName.of("AA"),
-        doc.context.obj({ E: open, Fo: open, X: exit }),
-      );
-      hit.set(PDFName.of("A"), open);
     }
   }
   // Every trigger closes other cards on its page, including cards created later.
@@ -636,27 +613,70 @@ export async function buildInteractivePdf(
       (r) => r.page === page && r.name.includes("_hover_"),
     );
     const hitNames = hits.map((r) => r.name);
-    for (const r of records.filter(
-      (r) => r.page === page && r.name.includes("_hover_"),
-    )) {
-      const aa = r.field.lookup(PDFName.of("AA"), PDFDict),
-        old = aa.get(PDFName.of("E"));
-      const groupPrefix = r.name.split("_hover_")[0] + "_hover_";
-      // An open card can cover another source word. Temporarily disable those
-      // hidden-under-card hotspots so they cannot intercept the card's buttons.
-      const otherHits = hitNames.filter((n) => !n.startsWith(groupPrefix));
-      const open = hide(pageNames, true, hide(otherHits, true, old as PDFDict));
-      aa.set(PDFName.of("E"), open);
-      aa.set(PDFName.of("Fo"), open);
-      r.field.set(PDFName.of("A"), open);
-    }
-    for (const r of records.filter(
-      (r) => r.page === page && r.name.endsWith("_close"),
-    ))
-      r.field.set(
-        PDFName.of("A"),
-        hide(hitNames, false, r.field.lookup(PDFName.of("A"), PDFDict)),
+    for (let id = 0; id < groups.length; id++) {
+      const group = groups[id];
+      if (group.page !== page) continue;
+      const hoverNames = group.h.flat(),
+        otherHits = hitNames.filter((n) => n !== group.hit);
+      const state = (frame: number, mode: Mode) =>
+        run(`HC_open(${id},${frame},${mode === "t"});`);
+      const show = (frame: number, mode: Mode) =>
+        hide(
+          group.all,
+          true,
+          hide(group[mode][frame], false, state(frame, mode)),
+        );
+      const leave = (frame: number) =>
+        hide(
+          hoverNames,
+          true,
+          hide(hitNames, false, run(`HC_leave(${id},${frame});`)),
+        );
+      const hit = hits.find((r) => r.name === group.hit)!.field;
+      const open = (mode: Mode) =>
+        hide(pageNames, true, hide(otherHits, true, show(0, mode)));
+      hit.set(
+        PDFName.of("AA"),
+        doc.context.obj({ E: open("h"), Fo: open("t"), X: leave(0) }),
       );
+      hit.set(PDFName.of("A"), open("t"));
+      for (const c of group.controls) {
+        c.field.set(
+          PDFName.of("AA"),
+          doc.context.obj({
+            E: hide(otherHits, true, show(c.frame, c.mode)),
+            X: c.mode === "h" ? leave(c.frame) : run("HC_keep();"),
+          }),
+        );
+        if (c.close)
+          c.field.set(
+            PDFName.of("A"),
+            hide(pageNames, true, hide(hitNames, false, run("HC_hide();"))),
+          );
+        else if (c.target !== undefined) {
+          const direction = records
+            .find((r) => r.field === c.field)!
+            .name.endsWith("_prev")
+            ? "prev"
+            : "next";
+          const focusName = `${prefix}${id}_${c.mode}_${c.target}_${direction}`;
+          const action = show(c.target, c.mode);
+          // A reader may keep keyboard focus on the now-hidden old frame.
+          action.set(
+            PDFName.of("Next"),
+            doc.context.obj({
+              S: "Hide",
+              T: group[c.mode][c.target].map((n) => PDFString.of(n)),
+              H: false,
+              Next: run(
+                `HC_open(${id},${c.target},${c.mode === "t"});try{this.getField(${JSON.stringify(focusName)}).setFocus();}catch(e){}`,
+              ),
+            }),
+          );
+          c.field.set(PDFName.of("A"), action);
+        }
+      }
+    }
     const annots = page.node.Annots();
     if (annots) {
       const own = new Set(
@@ -703,10 +723,10 @@ export async function buildInteractivePdf(
             existing
               ? doc.context.obj({
                   S: "JavaScript",
-                  JS: PDFString.of("HC_keep();"),
-                  Next: existing,
+                  JS: PDFString.of(""),
+                  Next: [bootstrap, js("HC_hide();"), existing],
                 })
-              : js("HC_keep();"),
+              : run("HC_hide();"),
           ),
         ),
       );
@@ -745,14 +765,21 @@ export async function buildInteractivePdf(
       ...controlFields,
     ]),
   );
-  const names = groups.flatMap((g) => g.all);
-  const hitNames = records
-    .filter((r) => r.name.includes("_hover_"))
-    .map((r) => r.name);
-  doc.addJavaScript(
-    `${prefix}hover`,
-    `var HC_doc=this,HC_timer=null;function HC_keep(){if(HC_timer!==null){try{app.clearTimeOut(HC_timer);}catch(e){}HC_timer=null;}}function HC_hide(){HC_keep();var n=${JSON.stringify(names)};for(var i=0;i<n.length;i++){var f=HC_doc.getField(n[i]);if(f)f.display=display.hidden;}var h=${JSON.stringify(hitNames)};for(var j=0;j<h.length;j++){var a=HC_doc.getField(h[j]);if(a)a.display=display.noPrint;}}function HC_leave(){HC_keep();try{HC_timer=app.setTimeOut("HC_hide();",150);}catch(e){}}`,
-  );
+  const runtime = pdfHoverRuntime({
+    groups: groups.map((g) => ({
+      hover: g.h,
+      pinned: g.t,
+      hit: g.hit,
+      page: originals.indexOf(g.page),
+    })),
+  });
+  doc.context
+    .lookup(bootstrap, PDFDict)
+    .set(
+      PDFName.of("JS"),
+      doc.context.register(doc.context.flateStream(runtime)),
+    );
+  doc.addJavaScript(`${prefix}hover`, "");
   progress("正在生成清晰的标注文字…");
   const { pdfAnchorImages } = await import("./pdf-anchor-images");
   for (const patch of await pdfAnchorImages(p, signal)) {
@@ -776,6 +803,14 @@ export async function buildInteractivePdf(
   doc.setSubject(
     "保留原页数；支持 PDF 表单交互的阅读器可悬停或点击查看图文、翻图与关闭。",
   );
+  await doc.flush();
+  // Use one shared stream for document initialization and event bootstrapping.
+  // Long/multi-fragment resumes can exceed PDF's literal-string size limit.
+  const jsNames = doc.catalog
+    .lookup(PDFName.of("Names"), PDFDict)
+    .lookup(PDFName.of("JavaScript"), PDFDict)
+    .lookup(PDFName.of("Names"), PDFArray);
+  jsNames.set(jsNames.size() - 1, bootstrap);
   const bytes = await doc.save({ updateFieldAppearances: false });
   return {
     blob: new Blob([new Uint8Array(bytes)], { type: "application/pdf" }),

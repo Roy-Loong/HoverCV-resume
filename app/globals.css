@@ -1903,6 +1903,41 @@ button.icon-btn {
   margin-top: 24px;
   line-height: 1.8;
 }
+.mobile-share {
+  border: 1px solid #dcd3ed;
+  border-radius: 10px;
+  padding: 18px;
+  background: #faf8fd;
+  display: grid;
+  gap: 12px;
+  text-align: left;
+}
+.mobile-share label,
+.mobile-share p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #776384;
+  margin: 0;
+}
+.mobile-share input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #dcd3ed;
+  background: white;
+  border-radius: 6px;
+}
+.read-link-result {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #e5dded;
+  padding-top: 14px;
+}
+.read-link-result > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .notice-box {
   padding: 17px;
   border: 1px solid #e7daf4;

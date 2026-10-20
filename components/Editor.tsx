@@ -46,6 +46,7 @@ import {
 import CanvasViewport from "./CanvasViewport";
 import ImageSettings from "./ImageSettings";
 import PdfDownloadOption from "./PdfDownloadOption";
+import MobileReadLink from "./MobileReadLink";
 import { PanelDivider, useWorkspacePanels } from "./WorkspacePanels";
 import { COLOR_PRESETS } from "@/lib/colors";
 import { EditHistory } from "@/lib/edit-history";
@@ -1664,6 +1665,7 @@ export default function Editor() {
                 </p>
                 <div className="export-options">
                   {project && <PdfDownloadOption project={project} />}
+                  {project && <MobileReadLink project={project} />}
                   <button
                     onClick={() =>
                       void perform(

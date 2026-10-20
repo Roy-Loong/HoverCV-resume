@@ -48,7 +48,9 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   expect(saved.getPageCount()).toBe(1);
   const fields = saved.getForm().getFields();
   expect(fields.filter((f) => f.getName().includes("_hover_"))).toHaveLength(3);
-  expect(fields.filter((f) => f.getName().includes("_panel_"))).toHaveLength(5);
+  expect(fields.filter((f) => f.getName().includes("_panel_"))).toHaveLength(
+    10,
+  );
   const task = getDocument({ data: new Uint8Array(bytes) }),
     pdf = await task.promise;
   try {
@@ -62,12 +64,12 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   } finally {
     await task.destroy();
   }
-  const panel = fields.find((f) => f.getName().includes("_0_panel_0"))!;
+  const panel = fields.find((f) => f.getName().includes("_0_h_panel_0"))!;
   const ap = panel.acroField.dict.lookup(PDFName.of("AP"), PDFDict),
     ref = ap.get(PDFName.of("N"))!;
   const stream = saved.context.lookup(ref);
   if (!(stream instanceof PDFRawStream)) throw Error("Missing card appearance");
-  const preview = saved.addPage([286, 430]);
+  const preview = saved.addPage([260, 360]);
   preview.node.set(
     PDFName.of("Resources"),
     stream.dict.get(PDFName.of("Resources"))!,
