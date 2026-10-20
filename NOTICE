@@ -12,6 +12,12 @@ PDF.js distributed workers, CMaps, standard fonts and wasm modules retain upstre
 Lucide icons: ISC. https://lucide.dev/license
 Next.js, React, Floating UI, Zod, idb, JSZip, Better Auth, node-postgres, AWS SDK, pdf-lib: see exact packages and licenses in docs/THIRD_PARTY.md and package-lock.json.
 
+The locally generated PDF export uses @pdf-lib/fontkit (MIT) and Droid Sans Fallback.
+Droid Sans Fallback: Copyright (c) 2005-2008, The Android Open Source Project.
+Licensed under Apache-2.0. Original notice and full license:
+public/fonts/DroidSansFallback-LICENSE.txt
+Font source distribution: https://github.com/ArtifexSoftware/mupdf/tree/master/resources/fonts/droid
+
 MinIO is a separately deployed, unmodified AGPL-3.0 service, not MIT code.
 Source used by deploy/Dockerfile.minio:
 https://github.com/minio/minio/tree/07c3a429bfed433e49018cb0f78a52145d4bedeb

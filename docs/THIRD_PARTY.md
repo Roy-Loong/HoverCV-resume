@@ -6,6 +6,7 @@
 | ------------------ | -------- | ------------------------- |
 | @aws-sdk/client-s3 | 3.1152.0 | Apache-2.0                |
 | @floating-ui/react | 0.27.20  | MIT                       |
+| @pdf-lib/fontkit   | 1.1.1    | MIT                       |
 | better-auth        | 1.7.10   | MIT                       |
 | idb                | 8.0.4    | ISC                       |
 | jszip              | 3.10.2   | (MIT OR GPL-3.0-or-later) |
@@ -19,6 +20,8 @@
 | zod                | 4.6.7    | MIT                       |
 
 PDF.js 标准字体、CMap 和 wasm 的上游许可文件随 postinstall 原样复制到 public/pdfjs。Next.js、React、PDF.js、Better Auth 当前 API 以已安装包的类型定义与 Next.js 内置官方文档核对。
+
+PDF 导出按需从本站加载 Droid Sans Fallback 中文字体；该字体为 Android Open Source Project 的 Apache-2.0 字体，版权与完整许可见 `public/fonts/DroidSansFallback-LICENSE.txt`。字体为通用资源，不包含用户简历或标注。
 
 设计参考的 MIT 全文见 DESIGN_REFERENCE_LICENSE.txt；PDF.js 的 Apache-2.0 全文见 PDFJS_LICENSE.txt。
 

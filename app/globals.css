@@ -1847,7 +1847,7 @@ button.icon-btn {
   flex-direction: column;
   gap: 10px;
 }
-.export-options > button {
+.export-options > :is(button, a) {
   display: flex;
   align-items: center;
   gap: 15px;
@@ -1857,12 +1857,13 @@ button.icon-btn {
   border-radius: 9px;
   background: #fff;
   color: #a28ab4;
+  text-decoration: none;
 }
-.export-options > button:hover {
+.export-options > :is(button, a):hover {
   background: #fbf7ff;
   border-color: #b9a3d5;
 }
-.export-options > button > div {
+.export-options > :is(button, a) > div {
   flex: 1;
 }
 .export-options strong {
@@ -1876,8 +1877,22 @@ button.icon-btn {
   margin: 6px 0 0;
   line-height: 1.65;
 }
-.export-options > button > svg:first-child {
+.export-options > :is(button, a) > svg:first-child {
   width: 21px;
+}
+.export-options > .pdf-download-ready {
+  border-color: #b5cdd4;
+  background: #f1f8fa;
+}
+.export-options > .pdf-export-error {
+  color: #b34b5f;
+  line-height: 1.8;
+  padding: 0 4px;
+}
+.export-options > .pdf-export-hint {
+  color: #567c88;
+  line-height: 1.8;
+  padding: 0 4px;
 }
 .modal-note {
   display: flex;
@@ -2335,7 +2350,7 @@ button.icon-btn {
   .preview-modal h2 {
     font-size: 16px;
   }
-  .export-options > button {
+  .export-options > :is(button, a) {
     padding: 13px;
     gap: 10px;
   }

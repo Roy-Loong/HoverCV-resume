@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import CanvasViewport from "./CanvasViewport";
 import ImageSettings from "./ImageSettings";
+import PdfDownloadOption from "./PdfDownloadOption";
 import { PanelDivider, useWorkspacePanels } from "./WorkspacePanels";
 import { COLOR_PRESETS } from "@/lib/colors";
 import { EditHistory } from "@/lib/edit-history";
@@ -1658,9 +1659,11 @@ export default function Editor() {
                 </span>
                 <h2>把故事，带到更多地方</h2>
                 <p className="modal-description">
-                  网页保留交互体验。原 PDF 仅作为底稿备份。
+                  PDF 保留点击跳转图文，HTML 保留悬浮体验。视频请选择 HTML
+                  或离线 ZIP。
                 </p>
                 <div className="export-options">
+                  {project && <PdfDownloadOption project={project} />}
                   <button
                     onClick={() =>
                       void perform(
