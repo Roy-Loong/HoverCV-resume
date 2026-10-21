@@ -17,7 +17,7 @@ for (const device of ["iPhone 13", "Pixel 7"] as const) {
     await page.locator(".hotspot").first().tap();
     const card = page.locator(".hover-card");
     await expect(card).toBeVisible();
-    await page.waitForTimeout(400); // Touch release must not schedule a 150 ms close.
+    await page.waitForTimeout(400); // Touch release must not schedule a 250 ms close.
     await expect(card).toBeVisible();
     await card.getByRole("button", { name: "下一张", exact: true }).tap();
     await expect(card.locator(".media-controls span")).toContainText("02");

@@ -97,14 +97,12 @@ test("照片原图比例、缩放拖动、保存恢复、撤销与离线导出�
   await dialog
     .getByRole("slider", { name: "图片左右位置", exact: true })
     .press("Home");
-  const style = await frame
-    .locator("img")
-    .evaluate((img) => ({
-      fit: getComputedStyle(img).objectFit,
-      position: getComputedStyle(img).objectPosition,
-      transform: getComputedStyle(img).transform,
-      origin: img.style.transformOrigin,
-    }));
+  const style = await frame.locator("img").evaluate((img) => ({
+    fit: getComputedStyle(img).objectFit,
+    position: getComputedStyle(img).objectPosition,
+    transform: getComputedStyle(img).transform,
+    origin: img.style.transformOrigin,
+  }));
   expect(style).toMatchObject({
     fit: "cover",
     position: "0% 100%",
@@ -191,7 +189,7 @@ test("照片原图比例、缩放拖动、保存恢复、撤销与离线导出�
   await expect(zoom).toHaveValue("300");
 });
 
-test("离线阅读关闭等待为150ms，持续移动不延长，重入卡片取消关闭", async ({
+test("离线阅读关闭等待为250ms，持续移动不延长，重入卡片取消关闭", async ({
   page,
   browser,
 }) => {
@@ -210,8 +208,18 @@ test("离线阅读关闭等待为150ms，持续移动不延长，重入卡片取
   await reader.clock.runFor(181);
   const card = reader.locator("#card");
   await expect(card).toBeVisible();
-  const box = (await card.boundingBox())!;
+  const box = (await card.boundingBox())!,
+    word = (await reader.locator(".hotspot").first().boundingBox())!;
+  const gapX =
+    box.x > word.x
+      ? (word.x + word.width + box.x) / 2
+      : (box.x + box.width + word.x) / 2;
+  await reader.mouse.move(gapX, word.y + word.height / 2);
+  await reader.clock.runFor(220);
+  await expect(card).toBeVisible();
   await reader.mouse.move(box.x + 60, box.y + 20);
+  await reader.clock.runFor(1000);
+  await expect(card).toBeVisible();
   await reader.mouse.move(20, 20);
   await reader.clock.runFor(100);
   await reader.mouse.move(box.x + 60, box.y + 20);
@@ -220,7 +228,7 @@ test("离线阅读关闭等待为150ms，持续移动不延长，重入卡片取
   await reader.mouse.move(20, 20);
   await reader.clock.runFor(100);
   await reader.mouse.move(30, 25);
-  await reader.clock.runFor(49);
+  await reader.clock.runFor(149);
   await expect(card).toBeVisible();
   await reader.clock.runFor(2);
   await expect(card).toBeHidden();

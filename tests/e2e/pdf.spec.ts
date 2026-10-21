@@ -66,7 +66,7 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
       original.items.map((i) => ("str" in i ? i.str : "")).join(""),
     ).toContain("ALEX MORGAN");
     const script = [...(await pdf.getJSActions())!.values()].flat().join("");
-    expect(script).toContain('setTimeOut("HC_hide();",150)');
+    expect(script).toContain('setTimeOut("HC_expire("+HC_generation+");",250)');
   } finally {
     await task.destroy();
   }

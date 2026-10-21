@@ -1,9 +1,8 @@
 import type { Project, Rect } from "./schema";
 import { imagePresentation } from "./media-layout";
 import { HOVER_CARD_WIDTH, HOVER_CARD_HEIGHT } from "./card-layout";
-export const HOVER_OPEN_MS = 180,
-  HOVER_CLOSE_MS = 150,
-  SLIDESHOW_MS = 3500;
+import { HOVER_OPEN_MS, HOVER_CLOSE_MS, SLIDESHOW_MS } from "./hover-timing";
+export { HOVER_OPEN_MS, HOVER_CLOSE_MS, SLIDESHOW_MS } from "./hover-timing";
 export function imagePercent(rect: Rect, page: Project["pages"][number]): Rect {
   const [x0, y0, x1, y1] = page.view;
   const points = [

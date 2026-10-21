@@ -184,7 +184,7 @@ describe("可下载的交互 PDF", () => {
       expect(text.includes(pdfText(a.body).replace(/\n/g, ""))).toBe(true);
       expect(
         [...((await pdf.getJSActions())?.values() || [])].flat().join(""),
-      ).toContain('setTimeOut("HC_hide();",150)');
+      ).toContain('setTimeOut("HC_expire("+HC_generation+");",250)');
     } finally {
       await task.destroy();
     }

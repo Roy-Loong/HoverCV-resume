@@ -584,8 +584,7 @@ export async function buildInteractivePdf(
             }
           let keepers = [rect];
           for (const hole of holes) keepers = cutOut(keepers, hole);
-          // The bridge keeps the 150 ms hover transition close to its word.
-          // Without scripting, click the word to pin before using controls.
+          // A short bridge lets entering the card cancel its close timer.
           if (x > anchor[2])
             keepers.push([
               anchor[2],
@@ -638,9 +637,8 @@ export async function buildInteractivePdf(
       const leave = (frame: number) =>
         hide(hoverNames, true, run(`HC_leave(${id},${frame});`));
       const hit = hits.find((r) => r.name === group.hit)!.field;
-      // Native-only hover leaves source words available after immediate
-      // closing. Pinned cards disable covered words until × is pressed, so a
-      // read-only card body cannot click through into a different annotation.
+      // A native-only hover needs source words after its immediate exit.
+      // Pinned cards and timed hover cards suppress underlying source words.
       const open = (mode: Mode) =>
         hide(
           pageNames,
@@ -660,10 +658,13 @@ export async function buildInteractivePdf(
         c.field.set(
           PDFName.of("AA"),
           doc.context.obj({
-            E:
-              c.mode === "t"
-                ? hide(otherHits, true, show(c.frame, c.mode))
-                : show(c.frame, c.mode),
+            // Do not hide/re-show the active card on every pointer crossing:
+            // that can emit another Exit and restart closing from inside it.
+            E: hide(
+              c.mode === "t" ? otherHits : hitNames,
+              c.mode === "t",
+              hide(group[c.mode][c.frame], false, state(c.frame, c.mode)),
+            ),
             X: c.mode === "h" ? leave(c.frame) : run("HC_keep();"),
           }),
         );

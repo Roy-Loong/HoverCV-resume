@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowDownToLine, FileText, Loader2 } from "lucide-react";
 import type { Project } from "@/lib/schema";
+import { HOVER_CLOSE_MS } from "@/lib/hover-timing";
 
 export default function PdfDownloadOption({ project }: { project: Project }) {
   const [progress, setProgress] = useState("");
@@ -86,10 +87,10 @@ export default function PdfDownloadOption({ project }: { project: Project }) {
       {result && (
         <p className="pdf-export-hint" role="status">
           PDF 已在浏览器内生成。点击上方“下载悬浮交互 PDF”保存，可通过微信发送。
-          电脑悬停查看，移开约 150
-          毫秒关闭（不支持计时脚本时直接关闭）；单击文字可固定卡片，再翻图或点 ×
-          关闭。手机需阅读器支持 PDF 表单动作，才可点击彩色文字打开图文；
-          本文件无法强制开启手机阅读器未支持的交互。
+          电脑悬停查看，移入卡片继续阅读；移出文字和卡片约 {HOVER_CLOSE_MS}
+          毫秒后自动关闭（不支持计时脚本的阅读器仍可能立即关闭）。 iPhone
+          微信聊天直接预览不支持本文件的图文弹层；其他手机阅读器也需支持 PDF
+          表单动作。
         </p>
       )}
     </>
