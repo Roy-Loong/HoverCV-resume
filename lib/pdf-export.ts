@@ -272,14 +272,41 @@ export async function buildInteractivePdf(
       crop = page.getCropBox();
     progress(`正在生成悬浮卡片 ${i + 1} / ${p.annotations.length}`);
     const slides = await renderPdfCards(a, signal);
-    const appearances: PDFRef[] = [];
+    // Tile the appearance around actual buttons and links. A full-card
+    // widget overlaps these controls and steals their clicks in readers that
+    // hit-test annotations in the opposite order to PDFium.
+    const layouts = [];
     for (const slide of slides) {
-      const image = await doc.embedPng(slide.png);
-      appearances.push(
-        await appearance(w, h, (canvas) => {
-          canvas.drawImage(image, { x: 0, y: 0, width: w, height: h });
+      const image =
+        slide.format === "jpeg"
+          ? await doc.embedJpg(slide.image)
+          : await doc.embedPng(slide.image);
+      const controls = slide.controls.map((control) => {
+        const [l, t, r, b] = control.rect;
+        return {
+          control,
+          rect: [
+            (l * w) / HOVER_CARD_WIDTH,
+            h - (b * h) / HOVER_CARD_HEIGHT,
+            (r * w) / HOVER_CARD_WIDTH,
+            h - (t * h) / HOVER_CARD_HEIGHT,
+          ],
+        };
+      });
+      let body = [[0, 0, w, h]];
+      for (const c of controls) body = cutOut(body, c.rect);
+      const tile = async (r: number[]) => ({
+        rect: r,
+        ap: await appearance(r[2] - r[0], r[3] - r[1], (canvas) => {
+          canvas.drawImage(image, { x: -r[0], y: -r[1], width: w, height: h });
         }),
-      );
+      });
+      const bodyTiles = [];
+      for (const r of body) bodyTiles.push(await tile(r));
+      const controlTiles = [];
+      for (const c of controls)
+        controlTiles.push({ ...c, ...(await tile(c.rect)) });
+      layouts.push({ body: bodyTiles, controls: controlTiles });
     }
     for (const anchor of pdfCardAnchors(a.rects)) {
       const id = groups.length,
@@ -350,35 +377,25 @@ export async function buildInteractivePdf(
             group.controls.push({ field, mode, frame });
             return field;
           };
-          const panelName = `${prefix}${id}_${mode}_panel_${frame}`;
-          names.push(panelName);
-          group.all.push(panelName);
-          const panel = widget(
-            page,
-            panelName,
-            rect,
-            appearances[frame],
-            true,
-            slides[frame].text,
-          );
-          // Keep the whole card interactive so WPS can dispatch its Exit even
-          // when the pointer jumps off the PDF page. Unlike the old partial
-          // body fields, its focus boundary coincides with the outer card.
-          group.controls.push({ field: panel, mode, frame, panel: true });
-          for (let n = 0; n < slides[frame].controls.length; n++) {
-            const control = slides[frame].controls[n];
-            const [l, t, r, b] = control.rect;
-            const area = [
-              x + (l * w) / HOVER_CARD_WIDTH,
-              y + h - (b * h) / HOVER_CARD_HEIGHT,
-              x + (r * w) / HOVER_CARD_WIDTH,
-              y + h - (t * h) / HOVER_CARD_HEIGHT,
-            ];
+          const layout = layouts[frame];
+          const at = (r: number[]) => [x + r[0], y + r[1], x + r[2], y + r[3]];
+          for (let part = 0; part < layout.body.length; part++) {
+            const tile = layout.body[part];
+            add(
+              `panel_${frame}${part ? `_part_${part}` : ""}`,
+              at(tile.rect),
+              tile.ap,
+              slides[frame].text,
+            );
+            group.controls.at(-1)!.panel = true;
+          }
+          for (let n = 0; n < layout.controls.length; n++) {
+            const { control, rect: controlRect, ap } = layout.controls[n];
             const suffix =
               control.action === "link"
                 ? `${frame}_link_${n}`
                 : `${frame}_${control.action}`;
-            const field = add(suffix, area, empty, control.label);
+            const field = add(suffix, at(controlRect), ap, control.label);
             if (control.action === "close") group.controls.at(-1)!.close = true;
             else if (control.url)
               field.set(
@@ -391,8 +408,6 @@ export async function buildInteractivePdf(
             else if (control.target !== undefined)
               group.controls.at(-1)!.target = control.target;
           }
-          // The whole card panel receives body events. Extra read-only body
-          // widgets can swallow Enter in WPS and create inner focus boxes.
           group[mode].push(names);
         }
       const transferRect = [
@@ -494,6 +509,9 @@ export async function buildInteractivePdf(
                 hide(group.exits, false, run(`HC_enter(${id});`)),
               ),
               X: leave(c.frame),
+              Fo: run(
+                `try{this.getField(${JSON.stringify(group.hit)}).setFocus();}catch(e){}`,
+              ),
             }),
           );
           continue;
@@ -509,7 +527,7 @@ export async function buildInteractivePdf(
               hide(
                 group.transit,
                 true,
-                hide(visible(c.frame, c.mode), false, run(`HC_touch(${id});`)),
+                hide(group.exits, false, run(`HC_touch(${id});`)),
               ),
             ),
             X: leave(c.frame),

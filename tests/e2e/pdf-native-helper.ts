@@ -15,10 +15,10 @@ import {
 export async function checkNativePdfTransfer(
   browser: Browser,
   input: Uint8Array,
-  withoutScripts: boolean | "timeout-disabled",
+  withoutScripts: boolean | "timeout-disabled" | "reverse-order",
 ) {
   const doc = await PDFDocument.load(input);
-  if (withoutScripts) {
+  if (withoutScripts === true || withoutScripts === "timeout-disabled") {
     const seen = new Set<unknown>();
     function strip(value: unknown) {
       if (seen.has(value)) return;
@@ -61,6 +61,27 @@ export async function checkNativePdfTransfer(
     for (const [, object] of doc.context.enumerateIndirectObjects())
       strip(object);
   }
+  if (withoutScripts === "reverse-order") {
+    // WPS and PDFium can choose opposite ends of the annotation array when
+    // controls overlap. Both orders must leave arrow hit areas unobstructed.
+    for (const p of doc.getPages()) {
+      const annotations = p.node.Annots();
+      if (annotations)
+        p.node.set(
+          PDFName.of("Annots"),
+          doc.context.obj(annotations.asArray().reverse()),
+        );
+    }
+    const fields = doc
+      .getForm()
+      .acroForm.dict.lookup(PDFName.of("Fields"), PDFArray);
+    doc
+      .getForm()
+      .acroForm.dict.set(
+        PDFName.of("Fields"),
+        doc.context.obj(fields.asArray().reverse()),
+      );
+  }
   const fields = doc.getForm().getFields();
   const rect = (suffix: string) =>
     fields
@@ -68,8 +89,19 @@ export async function checkNativePdfTransfer(
       .acroField.getWidgets()[0]
       .getRectangle();
   const source = rect("_0_hover_0"),
-    card = rect("_0_h_panel_0"),
-    next = rect("_0_h_0_next");
+    next = rect("_0_h_0_next"),
+    prev = rect("_0_h_0_prev");
+  const pieces = fields
+    .filter((f) => /_0_h_(?:panel_0(?:_part_\d+)?|0_.+)$/.test(f.getName()))
+    .map((f) => f.acroField.getWidgets()[0].getRectangle());
+  const x = Math.min(...pieces.map((r) => r.x)),
+    y = Math.min(...pieces.map((r) => r.y));
+  const card = {
+    x,
+    y,
+    width: Math.max(...pieces.map((r) => r.x + r.width)) - x,
+    height: Math.max(...pieces.map((r) => r.y + r.height)) - y,
+  };
   const media = doc.getPage(0).getSize();
   const bytes = await doc.save({ updateFieldAppearances: false });
   const server = createServer((_req, res) => {
@@ -178,6 +210,10 @@ export async function checkNativePdfTransfer(
     await page.mouse.click(nextPoint.x, nextPoint.y);
     await page.waitForTimeout(400);
     const second = await capture();
+    expect(
+      second.equals(closed),
+      "Next must not merely close or blank the card",
+    ).toBe(false);
     expect(second.equals(opened), "The next image must visibly change").toBe(
       false,
     );
@@ -186,6 +222,28 @@ export async function checkNativePdfTransfer(
       (await capture()).equals(second),
       "Entering the panel must retain the selected image",
     ).toBe(true);
+    // Stateful repeated navigation requires PDF scripting. The fully stripped
+    // file exercises only the existing native first-next and close fallback.
+    if (withoutScripts !== true) {
+      const prevPoint = point(
+        prev.x + prev.width / 2,
+        prev.y + prev.height / 2,
+      );
+      await move(prevPoint);
+      await page.mouse.click(prevPoint.x, prevPoint.y);
+      await page.waitForTimeout(400);
+      expect(
+        (await capture()).equals(opened),
+        `Previous must restore the first image (mode=${withoutScripts})`,
+      ).toBe(true);
+      await move(nextPoint);
+      await page.mouse.click(nextPoint.x, nextPoint.y);
+      await page.waitForTimeout(400);
+      expect(
+        (await capture()).equals(second),
+        "Next must work again after going back",
+      ).toBe(true);
+    }
     await move(outside);
     expect(
       (await capture()).equals(closed),

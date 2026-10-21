@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFile, mkdir } from "node:fs/promises";
-import { PDFDocument, PDFDict, PDFName, PDFRawStream } from "pdf-lib";
+import { PDFDocument, PDFDict, PDFName, PDFRawStream, PDFRef } from "pdf-lib";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { checkNativePdfTransfer } from "./pdf-native-helper";
 
@@ -9,7 +9,7 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   context,
   browser,
 }) => {
-  test.setTimeout(120000);
+  test.setTimeout(180000);
   const requests: { method: string; url: string }[] = [];
   const errors: string[] = [];
   page.on("request", (r) =>
@@ -50,7 +50,7 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   const link = page.getByRole("link", { name: /下载悬浮交互 PDF/ });
   await expect(link).toBeVisible({ timeout: 45000 });
   await expect(link).toHaveAttribute("href", /^blob:/);
-  await expect(link).toHaveAttribute("download", /_悬浮交互_v0\.7\.4\.pdf$/);
+  await expect(link).toHaveAttribute("download", /_悬浮交互_v0\.7\.5\.pdf$/);
   const event = page.waitForEvent("download");
   await link.click();
   const download = await event;
@@ -83,20 +83,61 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   } finally {
     await task.destroy();
   }
-  const panel = fields.find((f) => f.getName().includes("_0_h_panel_0"))!;
-  const cardRect = panel.acroField.getWidgets()[0].getRectangle();
-  expect((cardRect.width * 96) / 72).toBeCloseTo(webCard.width, 2);
-  expect((cardRect.height * 96) / 72).toBeCloseTo(webCard.height, 2);
-  const ap = panel.acroField.dict.lookup(PDFName.of("AP"), PDFDict),
-    ref = ap.get(PDFName.of("N"))!;
-  const stream = saved.context.lookup(ref);
-  if (!(stream instanceof PDFRawStream)) throw Error("Missing card appearance");
-  const preview = saved.addPage([270, 315]);
+  const frameFields = fields.filter((f) =>
+    /_0_h_(?:panel_0(?:_part_\d+)?|0_.+)$/.test(f.getName()),
+  );
+  const pieces = frameFields.map((f) =>
+    f.acroField.getWidgets()[0].getRectangle(),
+  );
+  // Reading backgrounds must not cover links or arrow buttons in either
+  // annotation order. A full-card background was blocking clicks in WPS.
+  for (let i = 0; i < pieces.length; i++)
+    for (let j = i + 1; j < pieces.length; j++) {
+      const a = pieces[i],
+        b = pieces[j];
+      const area =
+        Math.max(
+          0,
+          Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x),
+        ) *
+        Math.max(
+          0,
+          Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y),
+        );
+      expect(
+        area,
+        `${frameFields[i].getName()} overlaps ${frameFields[j].getName()}`,
+      ).toBeLessThan(0.000001);
+    }
+  const left = Math.min(...pieces.map((r) => r.x)),
+    bottom = Math.min(...pieces.map((r) => r.y));
+  const width = Math.max(...pieces.map((r) => r.x + r.width)) - left;
+  const height = Math.max(...pieces.map((r) => r.y + r.height)) - bottom;
+  expect((width * 96) / 72).toBeCloseTo(webCard.width, 2);
+  expect((height * 96) / 72).toBeCloseTo(webCard.height, 2);
+  const preview = saved.addPage([width, height]);
+  const objects: Record<string, PDFRef> = {},
+    commands: string[] = [];
+  for (let i = 0; i < frameFields.length; i++) {
+    const ref = frameFields[i].acroField.dict
+      .lookup(PDFName.of("AP"), PDFDict)
+      .get(PDFName.of("N"))!;
+    if (!(ref instanceof PDFRef)) throw Error("Missing appearance reference");
+    if (!(saved.context.lookup(ref) instanceof PDFRawStream))
+      throw Error("Missing card appearance");
+    objects[`Tile${i}`] = ref;
+    commands.push(
+      `q 1 0 0 1 ${pieces[i].x - left} ${pieces[i].y - bottom} cm /Tile${i} Do Q`,
+    );
+  }
   preview.node.set(
     PDFName.of("Resources"),
-    stream.dict.get(PDFName.of("Resources"))!,
+    saved.context.obj({ XObject: objects }),
   );
-  preview.node.set(PDFName.of("Contents"), ref);
+  preview.node.set(
+    PDFName.of("Contents"),
+    saved.context.register(saved.context.flateStream(commands.join("\n"))),
+  );
   const previewBytes = await saved.save({ updateFieldAppearances: false });
   await page.getByRole("button", { name: "关闭窗口" }).click();
   await page.reload();
@@ -164,4 +205,5 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   await checkNativePdfTransfer(browser, bytes, false);
   await checkNativePdfTransfer(browser, bytes, "timeout-disabled");
   await checkNativePdfTransfer(browser, bytes, true);
+  await checkNativePdfTransfer(browser, bytes, "reverse-order");
 });

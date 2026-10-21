@@ -13,7 +13,8 @@ export type CardControl = {
   label: string;
 };
 export type CardFrame = {
-  png: Uint8Array;
+  image: Uint8Array;
+  format: "png" | "jpeg";
   controls: CardControl[];
   text: string;
 };
@@ -121,17 +122,26 @@ export async function renderPdfCards(
           backgroundColor: "white",
         });
         signal?.throwIfAborted();
-        const blob = await new Promise<Blob>((resolve, reject) =>
-          canvas.toBlob(
-            (b) =>
-              b ? resolve(b) : reject(Error("注释卡片生成失败，请重试。")),
-            "image/png",
-          ),
-        );
+        // JPEG saves space for photos; PNG can be smaller for diagrams and
+        // text. Choose the smaller encoding without changing 3x resolution.
+        const encode = (format: "png" | "jpeg") =>
+          new Promise<Blob>((resolve, reject) =>
+            canvas.toBlob(
+              (b) =>
+                b ? resolve(b) : reject(Error("注释卡片生成失败，请重试。")),
+              `image/${format}`,
+              0.92,
+            ),
+          );
+        const png = await encode("png");
+        const jpeg = a.media[index] ? await encode("jpeg") : undefined;
+        const format = jpeg && jpeg.size < png.size ? "jpeg" : "png";
+        const blob = format === "jpeg" ? jpeg! : png;
         canvas.width = 0;
         canvas.height = 0;
         frames.push({
-          png: new Uint8Array(await blob.arrayBuffer()),
+          image: new Uint8Array(await blob.arrayBuffer()),
+          format,
           controls,
           media: index,
           offset,

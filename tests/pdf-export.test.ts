@@ -65,7 +65,8 @@ vi.mock("../lib/pdf-card-render", () => ({
       return Array.from(
         { length: Math.max(1, Math.ceil(a.body.length / 300)) },
         (_, index) => ({
-          png: new Uint8Array(
+          format: "png",
+          image: new Uint8Array(
             Buffer.from(
               "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jK1cAAAAASUVORK5CYII=",
               "base64",
