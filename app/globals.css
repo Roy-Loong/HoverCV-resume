@@ -1478,6 +1478,7 @@ button.icon-btn {
   margin-top: 6px;
 }
 .hover-card {
+  border: 1px solid #ddd4e9;
   width: 360px;
   height: 420px;
   max-width: 90vw;
@@ -2497,4 +2498,32 @@ button.icon-btn {
 }
 .workspace-heading p {
   font-size: 12px;
+}
+
+.card-content-inner {
+  display: flow-root;
+}
+.card-page-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-page-controls button {
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 0;
+}
+.card-page-controls small {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.card-credit {
+  min-height: 38px;
+  gap: 8px;
+}
+
+.card-credit .media-controls {
+  margin: 0;
+  gap: 8px;
 }

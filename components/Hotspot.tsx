@@ -14,15 +14,8 @@ import {
   safePolygon,
   FloatingPortal,
 } from "@floating-ui/react";
-import {
-  ChevronLeft,
-  ChevronRight,
-  ArrowUpRight,
-  X,
-  FileText,
-} from "lucide-react";
 import type { Annotation } from "@/lib/schema";
-import ImageFrame from "./ImageFrame";
+import CardContents from "./CardContents";
 import { HOVER_OPEN_MS, HOVER_CLOSE_MS, SLIDESHOW_MS } from "@/lib/reader";
 import { HOVER_CARD_WIDTH, HOVER_CARD_HEIGHT } from "@/lib/card-layout";
 export default function Hotspot({
@@ -106,56 +99,6 @@ export default function Hotspot({
     const element = video.current;
     return () => element?.pause();
   }, [index, open]);
-  const media = a.media[index];
-  const mediaBlock = media && (
-    <div className="card-media">
-      {media.type === "image" ? (
-        <ImageFrame media={media} />
-      ) : (
-        <div className="media-viewport">
-          <video
-            ref={video}
-            src={media.src}
-            controls
-            playsInline
-            preload="metadata"
-            onPointerEnter={() => setPaused(true)}
-          />
-        </div>
-      )}
-      <div className="media-caption">{media.caption || "作品展示"}</div>
-      <div
-        className="media-controls"
-        onPointerEnter={() => setPaused(true)}
-        onPointerLeave={() => setPaused(false)}
-      >
-        <button
-          aria-label="上一张"
-          onClick={() => {
-            setPaused(true);
-            video.current?.pause();
-            setIndex((index - 1 + a.media.length) % a.media.length);
-          }}
-        >
-          <ChevronLeft size={15} />
-        </button>
-        <span>
-          {String(index + 1).padStart(2, "0")}{" "}
-          <i>/ {String(a.media.length).padStart(2, "0")}</i>
-        </span>
-        <button
-          aria-label="下一张"
-          onClick={() => {
-            setPaused(true);
-            video.current?.pause();
-            setIndex((index + 1) % a.media.length);
-          }}
-        >
-          <ChevronRight size={15} />
-        </button>
-      </div>
-    </div>
-  );
   return (
     <>
       <button
@@ -198,55 +141,18 @@ export default function Hotspot({
             }}
             className={`hover-card template-${a.template}`}
           >
-            <div className="card-topline" style={{ background: a.color }} />
-            <button
-              className="card-close icon-btn"
-              aria-label="关闭注释"
-              onClick={() => setOpen(false)}
-            >
-              <X size={15} />
-            </button>
-            <div className="card-content">
-              <span className="eyebrow">
-                <FileText size={11} /> BEYOND THE RESUME
-              </span>
-              <h2>{a.title || "补充故事"}</h2>
-              {a.template !== "intro" && mediaBlock}
-              <p className="card-body">
-                {a.body || "在右侧添加补充说明，让这段经历更立体。"}
-              </p>
-              {a.template === "intro" && mediaBlock}
-              {a.links.map((l, i) => (
-                <a
-                  className="card-link"
-                  key={i}
-                  href={l.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {l.label || "访问链接"}
-                  <ArrowUpRight size={14} />
-                </a>
-              ))}
-              {a.citations.length > 0 && (
-                <div className="citations">
-                  资料来源 · {a.searchedAt?.slice(0, 10)}
-                  {a.citations.map((l, i) => (
-                    <a
-                      key={i}
-                      href={l.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {l.title}
-                    </a>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="card-credit">
-              补充内容由简历作者提供 <span>HoverCV</span>
-            </div>
+            <CardContents
+              annotation={a}
+              index={index}
+              videoRef={video}
+              onClose={touch.current ? () => setOpen(false) : undefined}
+              onPause={setPaused}
+              onIndex={(next) => {
+                setPaused(true);
+                video.current?.pause();
+                setIndex(next);
+              }}
+            />
           </div>
         </FloatingPortal>
       )}

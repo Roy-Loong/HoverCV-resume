@@ -5,15 +5,17 @@ import {
   PDFDict,
   PDFDocument,
   PDFName,
+  PDFNumber,
   PDFRawStream,
   PDFString,
+  decodePDFRawStream,
 } from "pdf-lib";
 
 /** Exercise the downloaded PDF in Chromium's real PDF plugin, not PDF.js. */
 export async function checkNativePdfTransfer(
   browser: Browser,
   input: Uint8Array,
-  withoutScripts: boolean,
+  withoutScripts: boolean | "timeout-disabled",
 ) {
   const doc = await PDFDocument.load(input);
   if (withoutScripts) {
@@ -23,8 +25,34 @@ export async function checkNativePdfTransfer(
       seen.add(value);
       if (value instanceof PDFRawStream) strip(value.dict);
       if (value instanceof PDFDict) {
-        if (value.get(PDFName.of("S")) === PDFName.of("JavaScript"))
-          value.set(PDFName.of("JS"), PDFString.of(""));
+        if (value.get(PDFName.of("S")) === PDFName.of("JavaScript")) {
+          if (withoutScripts === true)
+            value.set(PDFName.of("JS"), PDFString.of(""));
+          else {
+            const source = doc.context.lookup(value.get(PDFName.of("JS")));
+            const script =
+              source instanceof PDFRawStream
+                ? new TextDecoder().decode(decodePDFRawStream(source).decode())
+                : source instanceof PDFString
+                  ? source.decodeText()
+                  : "";
+            const replacement = script.replaceAll(
+              "app.setTimeOut(",
+              "(function(){return 0;})(",
+            );
+            value.set(
+              PDFName.of("JS"),
+              source instanceof PDFRawStream
+                ? doc.context.register(doc.context.flateStream(replacement))
+                : PDFString.of(replacement),
+            );
+          }
+        }
+        // Exercise the compatibility path where read-only widgets do not
+        // receive pointer events. This is a simulation, not a WPS app test.
+        const flags = value.get(PDFName.of("Ff"));
+        if (flags instanceof PDFNumber && flags.asNumber() & 1)
+          value.delete(PDFName.of("AA"));
         for (const [, child] of value.entries()) strip(child);
       } else if (value instanceof PDFArray) {
         for (const child of value.asArray()) strip(child);
@@ -183,6 +211,42 @@ export async function checkNativePdfTransfer(
       reopened.equals(opened),
       "The card must reopen after automatic closing",
     ).toBe(true);
+    // The old bounding rectangle incorrectly kept cards open in this blank
+    // strip beside their body. Test close-by exits, including after a click.
+    // PDFium expands widget hit boxes around the visual border; move 4 pt
+    // beyond that reader-owned tolerance, while staying close to the card.
+    for (const exit of withoutScripts === true
+      ? []
+      : [
+          point(card.x - 4, card.y + card.height / 2),
+          point(card.x + card.width + 4, card.y + card.height / 2),
+          point(card.x + card.width / 2, card.y - 4),
+        ]) {
+      await move(word);
+      await page.mouse.click(word.x, word.y);
+      await move(body);
+      expect((await capture()).equals(closed)).toBe(false);
+      await page.mouse.move(exit.x, exit.y);
+      await page.waitForTimeout(250);
+      const afterExit = await capture();
+      if (!afterExit.equals(closed)) {
+        await test
+          .info()
+          .attach("exit-250", { body: afterExit, contentType: "image/png" });
+        await test
+          .info()
+          .attach("exit-reference", { body: closed, contentType: "image/png" });
+        await page.waitForTimeout(1000);
+        await test.info().attach("exit-late", {
+          body: await capture(),
+          contentType: "image/png",
+        });
+      }
+      expect(
+        afterExit.equals(closed),
+        `Card must close within 250 ms even after clicking it (mode=${withoutScripts}, exit=${JSON.stringify(exit)})`,
+      ).toBe(true);
+    }
   } finally {
     await context.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));

@@ -1,4 +1,5 @@
-"""Exercise exported PDF form actions in PDFium (optional maintainer check).
+"""Legacy diagnostic for PDF exports through v0.7.3.
+Use tests/e2e/pdf.spec.ts for v0.7.4 shared web-card appearances/navigation.
 
 Requires: pip install pypdfium2 pypdf
 Usage: python scripts/verify-pdf-hover.py FILE.pdf [--snapshots PRIVATE_DIR]

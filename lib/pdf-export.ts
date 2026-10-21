@@ -7,12 +7,6 @@ import {
   PDFDocument,
   PDFName,
   PDFString,
-  clip,
-  endPath,
-  popGraphicsState,
-  pushGraphicsState,
-  rectangle,
-  rgb,
   type PDFFont,
   type PDFPage,
 } from "pdf-lib";
@@ -20,26 +14,15 @@ import {
   dataToBytes,
   projectSchema,
   type Annotation,
-  type Media,
   type Project,
 } from "./schema";
-import { imageLayout } from "./media-layout";
+import { renderPdfCards } from "./pdf-card-render";
+import { APP_VERSION } from "./version";
+import { HOVER_CARD_WIDTH, HOVER_CARD_HEIGHT } from "./card-layout";
 import { pdfHoverRuntime } from "./pdf-hover-runtime";
 import { PDF_CARD_WIDTH, PDF_CARD_HEIGHT } from "./card-layout";
 
 export type PdfProgress = (message: string) => void;
-const ACCENT = "#6099a9",
-  INK = "#253346",
-  MUTED = "#70818e";
-const color = (hex: string) =>
-  rgb(
-    ...([1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255) as [
-      number,
-      number,
-      number,
-    ]),
-  );
-
 export function pdfText(value: string) {
   return Array.from(value, (c) => {
     const cp = c.codePointAt(0)!;
@@ -103,45 +86,18 @@ export function pdfCardAnchors(rects: Annotation["rects"]) {
   return out;
 }
 
-async function photoBytes(media: Media, signal?: AbortSignal) {
-  signal?.throwIfAborted();
-  const img = new Image();
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = () => reject(Error("有图片无法读取，请替换该图片后重试。"));
-    img.src = media.src;
-  });
-  signal?.throwIfAborted();
-  const scale = Math.min(
-    1,
-    4096 / Math.max(img.naturalWidth, img.naturalHeight),
-    Math.sqrt(12_000_000 / (img.naturalWidth * img.naturalHeight)),
-  );
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
-  const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#f0eaf6";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  try {
-    const blob = await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(Error("图片处理失败"))),
-        "image/jpeg",
-        0.96,
-      ),
-    );
-    return {
-      bytes: new Uint8Array(await blob.arrayBuffer()),
-      width: canvas.width,
-      height: canvas.height,
-    };
-  } finally {
-    canvas.width = 0;
-    canvas.height = 0;
-    img.src = "";
-  }
+export function pdfPointerBridge(source: number[], card: number[]) {
+  const overlapY = [Math.max(source[1], card[1]), Math.min(source[3], card[3])];
+  if (source[2] <= card[0])
+    return [source[2], overlapY[0] - 3, card[0], overlapY[1] + 3];
+  if (card[2] <= source[0])
+    return [card[2], overlapY[0] - 3, source[0], overlapY[1] + 3];
+  const overlapX = [Math.max(source[0], card[0]), Math.min(source[2], card[2])];
+  if (card[3] <= source[1])
+    return [overlapX[0] - 3, card[3], overlapX[1] + 3, source[1]];
+  if (source[3] <= card[1])
+    return [overlapX[0] - 3, source[3], overlapX[1] + 3, card[1]];
+  return [...source];
 }
 
 /** Original-page PDF with native hover/click actions and the web card's size. */
@@ -152,7 +108,7 @@ export async function buildInteractivePdf(
 ) {
   signal?.throwIfAborted();
   const p = projectSchema.parse(input);
-  const filename = `${p.name.replace(/[\\/:*?"<>|]/g, "_")}_悬浮交互.pdf`;
+  const filename = `${p.name.replace(/[\\/:*?"<>|]/g, "_")}_悬浮交互_v${APP_VERSION}.pdf`;
   if (p.annotations.some((a) => a.media.some((m) => m.type === "video")))
     throw Error(
       "悬浮 PDF 当前支持文字和静态图片。项目含视频，请使用 HTML 或离线 ZIP 保留视频；原内容未改动。",
@@ -163,41 +119,18 @@ export async function buildInteractivePdf(
       filename,
       pages: p.pages.length,
     };
-  progress("正在准备悬浮 PDF 字体…");
-  const [response, { default: fontkit }] = await Promise.all([
-    fetch("/fonts/DroidSansFallback.ttf", { signal }),
-    import("@pdf-lib/fontkit"),
-  ]);
-  if (!response.ok) throw Error("PDF 字体下载失败，请检查网络后重试。");
+  progress("正在准备网页同款悬浮卡片…");
   const doc = await PDFDocument.load(dataToBytes(p.pdfData));
-  doc.registerFontkit(fontkit);
-  // This font's subsets can be extractable but invisible. Keep the full font.
-  const font = await doc.embedFont(await response.arrayBuffer(), {
-    subset: false,
-  });
-  const supported = new Set(font.getCharacterSet());
-  const content = pdfText(
-    p.annotations
-      .map(
-        (a) =>
-          a.title +
-          a.body +
-          a.media.map((m) => m.caption).join("") +
-          a.links.map((l) => l.label || l.url).join("") +
-          a.citations.map((c) => c.title).join(""),
-      )
-      .join(""),
-  );
-  for (const c of content)
-    if (!/[\n\r\t]/.test(c) && !supported.has(c.codePointAt(0)!))
-      throw Error(
-        `PDF 字体暂不支持字符“${c}”。请调整这个字符后重试，原内容已保留。`,
-      );
   const originals = [...doc.getPages()];
   const form = doc.getForm();
   form.acroForm.dict.set(PDFName.of("NeedAppearances"), doc.context.obj(false));
   const prefix = `HC${crypto.randomUUID().replaceAll("-", "")}_`;
-  const records: { page: PDFPage; field: PDFDict; name: string }[] = [];
+  const records: {
+    page: PDFPage;
+    field: PDFDict;
+    name: string;
+    rect: number[];
+  }[] = [];
   type Mode = "h" | "t";
   type Group = {
     page: PDFPage;
@@ -205,6 +138,9 @@ export async function buildInteractivePdf(
     h: string[][];
     t: string[][];
     exits: string[];
+    transit: string[];
+    outer: string[];
+    nav: Record<string, number>[];
     hit: string;
     controls: {
       field: PDFDict;
@@ -212,6 +148,7 @@ export async function buildInteractivePdf(
       frame: number;
       target?: number;
       close?: boolean;
+      panel?: boolean;
     }[];
   };
   const groups: Group[] = [];
@@ -264,31 +201,23 @@ export async function buildInteractivePdf(
       H: "N",
       Border: [0, 0, 0],
       BS: { W: 0 },
-      MK: { BC: [], BG: [] },
+      // Retain the card as a real button icon as well as its appearance.
+      // Readers regenerate AP when rect changes; AP alone would be erased.
+      MK: {
+        BC: [],
+        BG: [],
+        I: appearance,
+        TP: 1,
+        IF: { SW: "A", S: "P", A: [0.5, 0.5], FB: true },
+      },
       AP: { N: appearance },
       P: page.ref,
     });
     const ref = doc.context.register(field);
     form.acroForm.addField(ref);
     page.node.addAnnot(ref);
-    records.push({ page, field, name });
+    records.push({ page, field, name, rect });
     return field;
-  }
-  function drawText(
-    page: PDFPage,
-    value: string,
-    x: number,
-    top: number,
-    size = 9.5,
-    ink = INK,
-  ) {
-    page.drawText(pdfText(value), {
-      x,
-      y: page.getHeight() - top - size,
-      size,
-      font,
-      color: color(ink),
-    });
   }
   async function appearance(
     w: number,
@@ -305,69 +234,6 @@ export async function buildInteractivePdf(
       doc.removePage(doc.getPageCount() - 1);
     }
   }
-  async function buttonAppearance(label: string, w: number, h: number) {
-    return appearance(w, h, (page) => {
-      drawText(
-        page,
-        label,
-        Math.max(5, (w - font.widthOfTextAtSize(label, 9)) / 2),
-        5,
-        9,
-        ACCENT,
-      );
-    });
-  }
-  const photoCache = new Map<Media, Awaited<ReturnType<typeof photoBytes>>>();
-  async function drawPhoto(
-    page: PDFPage,
-    m: Media,
-    x: number,
-    top: number,
-    w: number,
-    h: number,
-  ) {
-    const source = photoCache.get(m) ?? (await photoBytes(m, signal));
-    photoCache.set(m, source);
-    const embedded = await doc.embedJpg(source.bytes),
-      layout = imageLayout(m),
-      fw = 314,
-      fh =
-        layout.height === "auto"
-          ? (314 * source.height) / source.width
-          : layout.height;
-    const scale = Math.min(w / fw, h / fh),
-      width = fw * scale,
-      height = fh * scale,
-      left = x + (w - width) / 2,
-      bottom = page.getHeight() - top - h + (h - height) / 2;
-    const fit =
-      layout.fit === "contain"
-        ? Math.min(fw / source.width, fh / source.height)
-        : Math.max(fw / source.width, fh / source.height);
-    const iw = source.width * fit * layout.zoom * scale,
-      ih = source.height * fit * layout.zoom * scale;
-    page.drawRectangle({
-      x: left,
-      y: bottom,
-      width,
-      height,
-      color: color("#f0eaf6"),
-    });
-    page.pushOperators(
-      pushGraphicsState(),
-      rectangle(left, bottom, width, height),
-      clip(),
-      endPath(),
-    );
-    page.drawImage(embedded, {
-      x: left + ((width - iw) * layout.x) / 100,
-      y: bottom + (height - ih) * (1 - layout.y / 100),
-      width: iw,
-      height: ih,
-    });
-    page.pushOperators(popGraphicsState());
-  }
-  type Row = { text: string; url?: string };
   function cutOut(rects: number[][], hole: number[]) {
     return rects.flatMap((r) => {
       const x0 = Math.max(r[0], hole[0]),
@@ -399,94 +265,21 @@ export async function buildInteractivePdf(
     h = PDF_CARD_HEIGHT * cardScale;
   if (w < 130 || h < 160)
     throw Error("这份 PDF 页面过小，无法放置可阅读的悬浮卡片。");
-  const closeAp = await buttonAppearance("×", 22, 22),
-    prevAp = await buttonAppearance("← 上一项", 72, 22),
-    nextAp = await buttonAppearance("下一项 →", 72, 22);
   for (let i = 0; i < p.annotations.length; i++) {
     signal?.throwIfAborted();
     const a = p.annotations[i],
       page = originals[a.page - 1],
       crop = page.getCropBox();
     progress(`正在生成悬浮卡片 ${i + 1} / ${p.annotations.length}`);
-    const fullTitle = pdfLines(a.title, font, 14, w - 48),
-      title = fullTitle.slice(0, 2);
-    if (fullTitle.length > 2) title[1] += "…";
-    const top = 19 + title.length * 19 + 14;
-    const rows: Row[] = [];
-    const addRows = (value: string, url?: string) =>
-      rows.push(
-        ...pdfLines(value, font, 9.5, w - 28).map((text) => ({ text, url })),
-      );
-    if (fullTitle.length > 2) addRows(a.title);
-    addRows(a.body || "");
-    for (let n = 0; n < a.media.length; n++)
-      if (a.media[n].caption.trim())
-        addRows(`图片 ${n + 1} · ${a.media[n].caption}`);
-    for (const l of [
-      ...a.links.map((l) => ({ title: l.label || l.url, url: l.url })),
-      ...a.citations,
-    ])
-      addRows(l.title, l.url);
-    const available = h - top - 47,
-      capacity = Math.max(1, Math.floor(available / 14));
-    const short =
-      rows.length <= Math.min(9, Math.floor((available - 110) / 14));
-    const slides: { rows: Row[]; media?: Media }[] = [];
-    if (short)
-      for (let n = 0; n < Math.max(1, a.media.length); n++)
-        slides.push({ rows, media: a.media[n] });
-    else {
-      for (let start = 0; start < rows.length; start += capacity)
-        slides.push({ rows: rows.slice(start, start + capacity) });
-      for (const media of a.media) slides.push({ rows: [], media });
-    }
-    // Reuse the same form appearances for every fragment and click/hover mode;
-    // duplicating the widgets must not duplicate photos or embedded fonts.
+    const slides = await renderPdfCards(a, signal);
     const appearances: PDFRef[] = [];
-    for (let s = 0; s < slides.length; s++) {
-      const slide = slides[s];
-      const ap = await appearance(w, h, async (canvas) => {
-        canvas.drawRectangle({
-          x: 0.5,
-          y: 0.5,
-          width: w - 1,
-          height: h - 1,
-          color: rgb(1, 1, 1),
-          borderColor: color("#a8c6e6"),
-          borderWidth: 0.8,
-        });
-        for (let t = 0; t < title.length; t++)
-          drawText(canvas, title[t], 14, 16 + t * 19, 14, ACCENT);
-        for (let r = 0; r < slide.rows.length; r++)
-          drawText(
-            canvas,
-            slide.rows[r].text,
-            14,
-            top + r * 14,
-            9.5,
-            slide.rows[r].url ? ACCENT : INK,
-          );
-        const imageTop = top + slide.rows.length * 14 + 10,
-          imageHeight = h - 47 - imageTop;
-        if (slide.media)
-          await drawPhoto(
-            canvas,
-            slide.media,
-            14,
-            imageTop,
-            w - 28,
-            imageHeight,
-          );
-        drawText(
-          canvas,
-          `${s + 1} / ${slides.length}`,
-          w / 2 - 14,
-          h - 29,
-          8,
-          MUTED,
-        );
-      });
-      appearances.push(ap);
+    for (const slide of slides) {
+      const image = await doc.embedPng(slide.png);
+      appearances.push(
+        await appearance(w, h, (canvas) => {
+          canvas.drawImage(image, { x: 0, y: 0, width: w, height: h });
+        }),
+      );
     }
     for (const anchor of pdfCardAnchors(a.rects)) {
       const id = groups.length,
@@ -518,28 +311,32 @@ export async function buildInteractivePdf(
           anchor[2] + 1,
           anchor[3] + 1,
         ],
-        // Protect any straight pointer path from the word into the card,
-        // including left/above/below placements and pauses in the gap.
-        readingRect = [
-          Math.max(crop.x, Math.min(sourceRect[0], rect[0]) - 3),
-          Math.max(crop.y, Math.min(sourceRect[1], rect[1]) - 3),
-          Math.min(crop.x + crop.width, Math.max(sourceRect[2], rect[2]) + 3),
-          Math.min(crop.y + crop.height, Math.max(sourceRect[3], rect[3]) + 3),
-        ],
+        // Only the narrow word-to-card corridor is protected. A large bounding
+        // rectangle would keep the card open in blank space beside its body.
+        bridge = pdfPointerBridge(sourceRect, rect),
+        readingRegions = [sourceRect, rect, bridge],
         group: Group = {
           page,
           all: [],
           h: [],
           t: [],
           exits: [],
+          transit: [],
+          outer: [],
+          nav: slides.map((s) =>
+            Object.fromEntries(
+              s.controls
+                .filter((c) => c.target !== undefined)
+                .map((c) => [c.action, c.target!]),
+            ),
+          ),
           hit: `${prefix}${id}_hover_0`,
           controls: [],
         };
       groups.push(group);
       for (const mode of ["h", "t"] as const)
         for (let frame = 0; frame < slides.length; frame++) {
-          const names: string[] = [],
-            holes: number[][] = [];
+          const names: string[] = [];
           const add = (
             suffix: string,
             r: number[],
@@ -562,79 +359,86 @@ export async function buildInteractivePdf(
             rect,
             appearances[frame],
             true,
-            a.title,
+            slides[frame].text,
           );
-          panel.set(PDFName.of("Ff"), doc.context.obj(65537));
-          // Readers may target the visual panel instead of its transparent
-          // keepers. It must cancel closing too, without taking input focus.
-          panel.set(
-            PDFName.of("AA"),
-            doc.context.obj({
-              E: run(`HC_enter(${id});`),
-              X: run(`HC_leave(${id},${frame});`),
-            }),
-          );
-          const closeRect = [x + w - 30, y + h - 30, x + w - 8, y + h - 8];
-          holes.push(closeRect);
-          add(`${frame}_close`, closeRect, closeAp, "关闭注释");
-          group.controls.at(-1)!.close = true;
-          for (let r = 0; r < slides[frame].rows.length; r++) {
-            const row = slides[frame].rows[r];
-            if (!row.url) continue;
-            const linkRect = [
-              x + 14,
-              y + h - top - r * 14 - 14,
-              x + w - 14,
-              y + h - top - r * 14 + 1,
+          // Keep the whole card interactive so WPS can dispatch its Exit even
+          // when the pointer jumps off the PDF page. Unlike the old partial
+          // body fields, its focus boundary coincides with the outer card.
+          group.controls.push({ field: panel, mode, frame, panel: true });
+          for (let n = 0; n < slides[frame].controls.length; n++) {
+            const control = slides[frame].controls[n];
+            const [l, t, r, b] = control.rect;
+            const area = [
+              x + (l * w) / HOVER_CARD_WIDTH,
+              y + h - (b * h) / HOVER_CARD_HEIGHT,
+              x + (r * w) / HOVER_CARD_WIDTH,
+              y + h - (t * h) / HOVER_CARD_HEIGHT,
             ];
-            holes.push(linkRect);
-            add(`${frame}_link_${r}`, linkRect, empty, row.text).set(
-              PDFName.of("A"),
-              doc.context.obj({
-                S: "URI",
-                URI: PDFString.of(new URL(row.url).href),
-              }),
-            );
-          }
-          if (slides.length > 1)
-            for (const [direction, label, bx, ap] of [
-              [-1, "← 上一项", x + 14, prevAp],
-              [1, "下一项 →", x + w - 86, nextAp],
-            ] as const) {
-              const r = [bx, y + 12, bx + 72, y + 34];
-              holes.push(r);
-              add(`${frame}_${direction < 0 ? "prev" : "next"}`, r, ap, label);
-              group.controls.at(-1)!.target =
-                (frame + direction + slides.length) % slides.length;
-            }
-          let keepers = [rect];
-          for (const hole of holes) keepers = cutOut(keepers, hole);
-          keepers.push(...cutOut(cutOut([readingRect], rect), sourceRect));
-          for (let k = 0; k < keepers.length; k++)
-            if (keepers[k][2] > keepers[k][0] && keepers[k][3] > keepers[k][1])
-              // Read-only pushbuttons still receive Enter/Exit, but cannot
-              // take input focus and draw a reader's rectangle over the title.
-              add(`${frame}_keep_${k}`, keepers[k], empty, "").set(
-                PDFName.of("Ff"),
-                doc.context.obj(65537),
+            const suffix =
+              control.action === "link"
+                ? `${frame}_link_${n}`
+                : `${frame}_${control.action}`;
+            const field = add(suffix, area, empty, control.label);
+            if (control.action === "close") group.controls.at(-1)!.close = true;
+            else if (control.url)
+              field.set(
+                PDFName.of("A"),
+                doc.context.obj({
+                  S: "URI",
+                  URI: PDFString.of(new URL(control.url).href),
+                }),
               );
+            else if (control.target !== undefined)
+              group.controls.at(-1)!.target = control.target;
+          }
+          // The whole card panel receives body events. Extra read-only body
+          // widgets can swallow Enter in WPS and create inner focus boxes.
           group[mode].push(names);
         }
+      const transferRect = [
+        Math.min(sourceRect[0], rect[0]),
+        Math.min(sourceRect[1], rect[1]),
+        Math.max(sourceRect[2], rect[2]),
+        Math.max(sourceRect[3], rect[3]),
+      ];
+      const travel = cutOut(cutOut([transferRect], rect), sourceRect);
+      for (let k = 0; k < travel.length; k++) {
+        const name = `${prefix}${id}_travel_${k}`;
+        group.transit.push(name);
+        group.all.push(name);
+        widget(page, name, travel[k], empty, true, "").set(
+          PDFName.of("AA"),
+          doc.context.obj({
+            E: run(`HC_transfer(${id});`),
+            X: run(`if(HC_active===${id})HC_leave(${id},HC_frame);`),
+          }),
+        );
+      }
+      const outer = cutOut(
+        [[crop.x, crop.y, crop.x + crop.width, crop.y + crop.height]],
+        transferRect,
+      );
+      for (let k = 0; k < outer.length; k++) {
+        const name = `${prefix}${id}_outer_${k}`;
+        group.transit.push(name);
+        group.outer.push(name);
+        group.all.push(name);
+        widget(page, name, outer[k], empty, true, "");
+      }
       // Native closing happens outside the whole reading region, never on
       // the internal boundary between the word, bridge and card. This also
       // works when a reader runs Hide actions but ignores JavaScript timers.
-      const outside = cutOut(
-        [[crop.x, crop.y, crop.x + crop.width, crop.y + crop.height]],
-        readingRect,
-      );
+      let outside = [
+        [crop.x, crop.y, crop.x + crop.width, crop.y + crop.height],
+      ];
+      for (const region of readingRegions) outside = cutOut(outside, region);
       for (let k = 0; k < outside.length; k++) {
         const name = `${prefix}${id}_exit_${k}`;
         group.exits.push(name);
         group.all.push(name);
-        widget(page, name, outside[k], empty, true, "").set(
-          PDFName.of("Ff"),
-          doc.context.obj(65537),
-        );
+        // WPS may omit pointer events on read-only widgets. These invisible
+        // outside guards must be interactive; they never paint a field border.
+        widget(page, name, outside[k], empty, true, "");
       }
       widget(
         page,
@@ -659,30 +463,41 @@ export async function buildInteractivePdf(
       const group = groups[id];
       if (group.page !== page) continue;
       const otherHits = hitNames.filter((n) => n !== group.hit);
-      const state = (frame: number, mode: Mode) =>
-        run(`HC_open(${id},${frame},${mode === "t"});`);
-      const visible = (frame: number, mode: Mode) => [
+      const state = (frame: number, mode: Mode, inside = true) =>
+        run(`HC_open(${id},${frame},${mode === "t"},${inside});`);
+      const visible = (frame: number, mode: Mode, inside = true) => [
         ...group[mode][frame],
-        ...group.exits,
+        ...(inside ? group.exits : group.transit),
       ];
-      const show = (frame: number, mode: Mode) =>
+      const show = (frame: number, mode: Mode, inside = true) =>
         hide(
           group.all,
           true,
-          hide(visible(frame, mode), false, state(frame, mode)),
+          hide(visible(frame, mode, inside), false, state(frame, mode, inside)),
         );
       const leave = (frame: number) => run(`HC_leave(${id},${frame});`);
       const hit = hits.find((r) => r.name === group.hit)!.field;
       // The outside guards restore source words when the reading region is
       // left, so covered words can stay suppressed even without scripting.
       const open = (mode: Mode) =>
-        hide(pageNames, true, hide(otherHits, true, show(0, mode)));
-      hit.set(
-        PDFName.of("AA"),
-        doc.context.obj({ E: open("h"), Fo: open("t"), X: leave(0) }),
-      );
+        hide(pageNames, true, hide(otherHits, true, show(0, mode, false)));
+      hit.set(PDFName.of("AA"), doc.context.obj({ E: open("h"), X: leave(0) }));
       hit.set(PDFName.of("A"), open("t"));
       for (const c of group.controls) {
+        if (c.panel) {
+          c.field.set(
+            PDFName.of("AA"),
+            doc.context.obj({
+              E: hide(
+                group.transit,
+                true,
+                hide(group.exits, false, run(`HC_enter(${id});`)),
+              ),
+              X: leave(c.frame),
+            }),
+          );
+          continue;
+        }
         c.field.set(
           PDFName.of("AA"),
           doc.context.obj({
@@ -691,9 +506,13 @@ export async function buildInteractivePdf(
             E: hide(
               otherHits,
               true,
-              hide(visible(c.frame, c.mode), false, state(c.frame, c.mode)),
+              hide(
+                group.transit,
+                true,
+                hide(visible(c.frame, c.mode), false, run(`HC_touch(${id});`)),
+              ),
             ),
-            X: c.mode === "h" ? leave(c.frame) : run("HC_keep();"),
+            X: leave(c.frame),
           }),
         );
         if (c.close)
@@ -704,11 +523,13 @@ export async function buildInteractivePdf(
         else if (c.target !== undefined) {
           const direction = records
             .find((r) => r.field === c.field)!
-            .name.endsWith("_prev")
-            ? "prev"
-            : "next";
-          const focusName = `${prefix}${id}_${c.mode}_${c.target}_${direction}`;
-          const action = show(c.target, c.mode);
+            .name.split("_")
+            .at(-1)!;
+          const action = hide(
+            group.all,
+            true,
+            hide(visible(c.target, c.mode), false),
+          );
           // A reader may keep keyboard focus on the now-hidden old frame.
           action.set(
             PDFName.of("Next"),
@@ -717,25 +538,20 @@ export async function buildInteractivePdf(
               T: visible(c.target, c.mode).map((n) => PDFString.of(n)),
               H: false,
               Next: run(
-                `HC_open(${id},${c.target},${c.mode === "t"});try{this.getField(${JSON.stringify(focusName)}).setFocus();}catch(e){}`,
+                `HC_nav(${id},${JSON.stringify(direction)});try{this.getField(${JSON.stringify(group.hit)}).setFocus();}catch(e){}`,
               ),
             }),
           );
           c.field.set(PDFName.of("A"), action);
         }
       }
-      for (const name of group.exits) {
+      const outsideAction = doc.context.register(
+        hide(pageNames, true, hide(hitNames, false, run(`HC_outside(${id});`))),
+      );
+      for (const name of [...group.exits, ...group.outer]) {
         const field = records.find((r) => r.name === name)!.field;
-        field.set(
-          PDFName.of("AA"),
-          doc.context.obj({
-            E: hide(
-              pageNames,
-              true,
-              hide(hitNames, false, run(`HC_outside(${id});`)),
-            ),
-          }),
-        );
+        field.set(PDFName.of("AA"), doc.context.obj({ E: outsideAction }));
+        field.set(PDFName.of("A"), outsideAction);
       }
     }
     const annots = page.node.Annots();
@@ -761,7 +577,7 @@ export async function buildInteractivePdf(
             ? anchors
             : name.includes("_panel_")
               ? panels
-              : name.includes("_exit_")
+              : name.includes("_exit_") || name.includes("_outer_")
                 ? exits
                 : controls
           : original
@@ -772,8 +588,8 @@ export async function buildInteractivePdf(
         doc.context.obj([
           ...original,
           ...anchors,
-          ...panels,
           ...controls,
+          ...panels,
           ...exits,
         ]),
       );
@@ -823,7 +639,7 @@ export async function buildInteractivePdf(
         ? anchorFields
         : name.includes("_panel_")
           ? panelFields
-          : name.includes("_exit_")
+          : name.includes("_exit_") || name.includes("_outer_")
             ? exitFields
             : controlFields
       : originalFields
@@ -834,16 +650,24 @@ export async function buildInteractivePdf(
     doc.context.obj([
       ...originalFields,
       ...anchorFields,
-      ...panelFields,
       ...controlFields,
+      ...panelFields,
       ...exitFields,
     ]),
   );
   const runtime = pdfHoverRuntime({
+    rects: Object.fromEntries(
+      records.map((r) => [
+        r.name,
+        [r.rect[0], r.rect[3], r.rect[2], r.rect[1]],
+      ]),
+    ),
     groups: groups.map((g) => ({
       hover: g.h,
       pinned: g.t,
       exits: g.exits,
+      transit: g.transit,
+      nav: g.nav,
       hit: g.hit,
       page: originals.indexOf(g.page),
     })),
@@ -874,7 +698,7 @@ export async function buildInteractivePdf(
   signal?.throwIfAborted();
   progress("正在打包悬浮交互 PDF…");
   doc.setTitle(`${p.name} · 悬浮交互简历`);
-  doc.setCreator("HoverCV");
+  doc.setCreator(`HoverCV v${APP_VERSION}`);
   doc.setSubject(
     "保留原页数；支持 PDF 表单交互的阅读器可悬停或点击查看图文、翻图与关闭。",
   );

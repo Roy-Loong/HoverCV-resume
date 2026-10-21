@@ -9,7 +9,7 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   context,
   browser,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(120000);
   const requests: { method: string; url: string }[] = [];
   const errors: string[] = [];
   page.on("request", (r) =>
@@ -27,22 +27,30 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   await page.locator("#title").fill("中文图文下载测试");
   await page.locator("#body").fill("图片位置和缩放保留，悬停查看图文。♥囍");
   await expect(page.locator(".save-status")).toContainText("已保存至本地");
+  await page.mouse.move(20, 100);
+  await page.locator(".hotspot").first().hover();
+  await expect(page.locator(".hover-card")).toBeVisible();
+  const webImage = await page.locator(".hover-card").screenshot();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "导出", exact: true }).click();
-  await page.route("**/fonts/DroidSansFallback.ttf", (r) =>
-    r.fulfill({ status: 503, body: "unavailable" }),
-  );
+  await page.evaluate(() => {
+    const original = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function (callback) {
+      HTMLCanvasElement.prototype.toBlob = original;
+      callback(null);
+    };
+  });
   const generate = page.getByRole("button", { name: /^悬浮交互 PDF/ });
   await generate.click();
   await expect(page.locator(".pdf-export-error")).toContainText(
-    "PDF 字体下载失败",
+    "注释卡片生成失败",
   );
   await expect(generate).toBeEnabled();
-  await page.unroute("**/fonts/DroidSansFallback.ttf");
   await generate.click();
   const link = page.getByRole("link", { name: /下载悬浮交互 PDF/ });
   await expect(link).toBeVisible({ timeout: 45000 });
   await expect(link).toHaveAttribute("href", /^blob:/);
-  await expect(link).toHaveAttribute("download", /_悬浮交互\.pdf$/);
+  await expect(link).toHaveAttribute("download", /_悬浮交互_v0\.7\.4\.pdf$/);
   const event = page.waitForEvent("download");
   await link.click();
   const download = await event;
@@ -56,9 +64,10 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   expect(saved.getPageCount()).toBe(1);
   const fields = saved.getForm().getFields();
   expect(fields.filter((f) => f.getName().includes("_hover_"))).toHaveLength(3);
-  expect(fields.filter((f) => f.getName().includes("_panel_"))).toHaveLength(
-    10,
-  );
+  expect(
+    fields.filter((f) => f.getName().includes("_panel_")).length,
+  ).toBeGreaterThanOrEqual(10);
+  expect(fields.some((f) => f.getName().endsWith("_down"))).toBe(true);
   const task = getDocument({ data: new Uint8Array(bytes) }),
     pdf = await task.promise;
   try {
@@ -68,7 +77,9 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
       original.items.map((i) => ("str" in i ? i.str : "")).join(""),
     ).toContain("ALEX MORGAN");
     const script = [...(await pdf.getJSActions())!.values()].flat().join("");
-    expect(script).toContain('setTimeOut("HC_expire("+HC_generation+");",250)');
+    expect(script).toContain("app.setTimeOut(script,250)");
+    expect(script).toContain("app.setInterval(script,250)");
+    expect(fields.some((f) => f.getName().endsWith("_close"))).toBe(false);
   } finally {
     await task.destroy();
   }
@@ -96,9 +107,8 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   ).toEqual([]);
   expect(errors).toEqual([]);
 
-  // Text extraction alone cannot catch broken embedded font subsets. Render
-  // the downloaded file and compare its Chinese glyph ink with the same TTF
-  // drawn by Chromium, so invisible glyphs fail this regression check.
+  // Compare actual PDF appearance pixels with the visible web card. Checking
+  // only the outer rectangle previously missed image scaling and typography.
   const reader = await context.newPage();
   await reader.route("**/__pdf-check/pdf.mjs", async (r) =>
     r.fulfill({
@@ -120,29 +130,38 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
     GlobalWorkerOptions.workerSrc='/pdfjs/pdf.worker.min.mjs';
     const task=getDocument({url:'/__pdf-check/data.pdf',standardFontDataUrl:'/pdfjs/standard_fonts/'});
     const doc=await task.promise;
-    const p=await doc.getPage(2),v=p.getViewport({scale:2});
+    const p=await doc.getPage(2),v=p.getViewport({scale:4/3});
     const canvas=document.querySelector('#pdf');canvas.width=v.width;canvas.height=v.height;
     await p.render({canvas,viewport:v}).promise;
-    const font=await new FontFace('check-cjk','url(/fonts/DroidSansFallback.ttf)').load();document.fonts.add(font);
-    const reference=document.querySelector('#reference');reference.width=canvas.width;reference.height=canvas.height;
-    const ctx=reference.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,reference.width,reference.height);
-    ctx.font='28px check-cjk';ctx.fillStyle='#6099a9';ctx.fillText('中文图文下载测试',28,60);
-    const ink=(c)=>{const d=c.getContext('2d').getImageData(28,20,Math.ceil(ctx.measureText('中文图文下载测试').width),50).data;let n=0;for(let i=0;i<d.length;i+=4)if((d[i]+d[i+1]+d[i+2])/3<200)n++;return n};
-    window.inkRatio=ink(canvas)/ink(reference);
+    const img=new Image();img.src='data:image/png;base64,${webImage.toString("base64")}';await img.decode();
+    const reference=document.querySelector('#reference');reference.width=360;reference.height=420;
+    const ctx=reference.getContext('2d');ctx.drawImage(img,0,0);
+    const a=ctx.getImageData(0,0,360,420).data,b=canvas.getContext('2d').getImageData(0,0,360,420).data;
+    let sum=0,large=0;for(let i=0;i<a.length;i+=4){const d=(Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]))/3;sum+=d;if(d>60)large++;}
+    window.pixelDiff={mean:sum/(360*420),large:large/(360*420)};
   </script>`,
     }),
   );
   await reader.goto("/__pdf-check/reader");
   await reader.waitForFunction(
+    () => !!(window as unknown as { pixelDiff?: unknown }).pixelDiff,
+  );
+  const diff = await reader.evaluate(
     () =>
-      typeof (window as unknown as { inkRatio?: number }).inkRatio === "number",
+      (window as unknown as { pixelDiff: { mean: number; large: number } })
+        .pixelDiff,
   );
-  const ratio = await reader.evaluate(
-    () => (window as unknown as { inkRatio: number }).inkRatio,
-  );
-  expect(ratio).toBeGreaterThan(0.8);
-  expect(ratio).toBeLessThan(1.3);
+  await test
+    .info()
+    .attach("web-card", { body: webImage, contentType: "image/png" });
+  await test.info().attach("pdf-card", {
+    body: await reader.locator("#pdf").screenshot(),
+    contentType: "image/png",
+  });
+  expect(diff.mean).toBeLessThan(4);
+  expect(diff.large).toBeLessThan(0.03);
   await reader.close();
   await checkNativePdfTransfer(browser, bytes, false);
+  await checkNativePdfTransfer(browser, bytes, "timeout-disabled");
   await checkNativePdfTransfer(browser, bytes, true);
 });

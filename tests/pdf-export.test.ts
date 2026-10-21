@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFile } from "node:fs/promises";
 import {
   PDFDocument,
   PDFDict,
@@ -21,6 +20,7 @@ import {
   pdfCardAnchors,
   pdfLines,
   pdfText,
+  pdfPointerBridge,
 } from "../lib/pdf-export";
 import { bytesToData, newAnnotation, type Project } from "../lib/schema";
 
@@ -53,12 +53,43 @@ async function fixture(): Promise<Project> {
     revision: 0,
   } satisfies Project;
 }
-async function fontFetch() {
-  const font = await readFile("public/fonts/DroidSansFallback.ttf");
-  const fetcher = vi.fn().mockImplementation(async () => new Response(font));
-  vi.stubGlobal("fetch", fetcher);
-  return fetcher;
-}
+vi.mock("../lib/pdf-card-render", () => ({
+  renderPdfCards: vi.fn(
+    async (a: {
+      title: string;
+      body: string;
+      links: { label: string; url: string }[];
+      citations: { title: string; url: string }[];
+    }) => {
+      const text = `${a.title}\n${a.body}`;
+      return Array.from(
+        { length: Math.max(1, Math.ceil(a.body.length / 300)) },
+        (_, index) => ({
+          png: new Uint8Array(
+            Buffer.from(
+              "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jK1cAAAAASUVORK5CYII=",
+              "base64",
+            ),
+          ),
+          text,
+          controls: [
+            ...(index === 0
+              ? [
+                  ...a.links,
+                  ...a.citations.map((c) => ({ label: c.title, url: c.url })),
+                ].map((l, i) => ({
+                  rect: [22, 150 + i * 20, 330, 166 + i * 20],
+                  action: "link",
+                  label: l.label,
+                  url: l.url,
+                }))
+              : []),
+          ],
+        }),
+      );
+    },
+  ),
+}));
 vi.mock("../lib/pdf-anchor-images", () => ({
   pdfAnchorImages: vi.fn().mockResolvedValue([]),
 }));
@@ -93,6 +124,17 @@ describe("可下载的交互 PDF", () => {
       [200, 100, 240, 114],
     ]);
   });
+  it("过渡区仅连接文字与卡片，左右/上下均不覆盖卡片侧面的大片空白", () => {
+    expect(pdfPointerBridge([20, 690, 80, 710], [86, 399, 356, 714])).toEqual([
+      80, 687, 86, 713,
+    ]);
+    expect(
+      pdfPointerBridge([500, 690, 550, 710], [224, 399, 494, 714]),
+    ).toEqual([494, 687, 500, 713]);
+    expect(pdfPointerBridge([30, 690, 570, 710], [317, 369, 587, 684])).toEqual(
+      [314, 684, 573, 690],
+    );
+  });
   it("无注释时原样交付原 PDF，无需字体或网络", async () => {
     const p = await fixture();
     const fetcher = vi.fn();
@@ -105,7 +147,6 @@ describe("可下载的交互 PDF", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
   it("原页数和正文不变，长说明保留在隐藏卡片内，悬停、点击和外部链接均有效", async () => {
-    await fontFetch();
     const p = await fixture(),
       a = newAnnotation(1, [[38, 695, 270, 725]], "原始正文", "text");
     a.title = "项目图文详情";
@@ -147,50 +188,33 @@ describe("可下载的交互 PDF", () => {
       expect(
         f.acroField.dict.lookup(PDFName.of("F"), PDFNumber).asNumber(),
       ).toBe(2);
-    // Inspect appearance streams through PDF.js as temporary test pages. These
-    // pages are never part of the exported file.
+    // The appearance is the shared web card image; its accessible field
+    // description retains full text independently of visual pagination.
     for (const f of panels) {
-      const appearance = f.acroField.dict.lookup(PDFName.of("AP"), PDFDict),
-        ref = appearance.get(PDFName.of("N"))!;
-      const stream = doc.context.lookup(ref),
-        page = doc.addPage([270, 315]);
-      if (!(stream instanceof PDFRawStream))
-        throw Error("Missing appearance stream");
-      page.node.set(
-        PDFName.of("Resources"),
-        stream.dict.get(PDFName.of("Resources"))!,
-      );
-      page.node.set(PDFName.of("Contents"), ref);
+      const label = f.acroField.dict.get(
+        PDFName.of("TU"),
+      ) as import("pdf-lib").PDFHexString;
+      expect(label.decodeText()).toContain(a.body);
     }
     const task = getDocument({
-        data: await doc.save({ updateFieldAppearances: false }),
-      }),
-      pdf = await task.promise;
+      data: new Uint8Array(await result.blob.arrayBuffer()),
+    });
+    const pdf = await task.promise;
     try {
       const source = await (await pdf.getPage(1)).getTextContent();
       expect(source.items.map((x) => ("str" in x ? x.str : "")).join("")).toBe(
         "Original vector resume",
       );
-      let text = "";
-      for (let i = 2; i <= pdf.numPages; i++) {
-        const content = await (await pdf.getPage(i)).getTextContent();
-        text += content.items
-          .filter(
-            (x) => "str" in x && x.transform[5] > 47 && x.transform[5] < 265,
-          )
-          .map((x) => ("str" in x ? x.str : ""))
-          .join("");
-      }
-      expect(text.includes(pdfText(a.body).replace(/\n/g, ""))).toBe(true);
-      expect(
-        [...((await pdf.getJSActions())?.values() || [])].flat().join(""),
-      ).toContain('setTimeOut("HC_expire("+HC_generation+");",250)');
+      const actions = [...((await pdf.getJSActions())?.values() || [])]
+        .flat()
+        .join("");
+      expect(actions).toContain("app.setTimeOut(script,250)");
+      expect(actions).toContain("app.setInterval(script,250)");
     } finally {
       await task.destroy();
     }
   }, 30000);
-  it("多注释共用原页，不生成跳页；切换标注隐藏其它卡片且关闭按钮位于卡片上层", async () => {
-    await fontFetch();
+  it("多注释共用原页、不增加关闭按钮，切换标注隐藏其它卡片", async () => {
     const p = await fixture();
     p.annotations = Array.from({ length: 13 }, (_, i) =>
       newAnnotation(
@@ -205,31 +229,21 @@ describe("可下载的交互 PDF", () => {
     expect(doc.getPageCount()).toBe(1);
     const fields = doc.getForm().getFields();
     expect(fields.filter((f) => f.getName().endsWith("_close"))).toHaveLength(
-      26,
+      0,
     );
     for (const f of fields.filter((f) => f.getName().includes("_panel_")))
       expect(
         f.acroField.dict.lookup(PDFName.of("Ff"), PDFNumber).asNumber() & 1,
-      ).toBe(1);
+      ).toBe(0);
     const annotations = doc.getPage(0).node.Annots()!;
     const names = Array.from({ length: annotations.size() }, (_, i) =>
-      annotations
-        .lookup(i, PDFDict)
-        .lookup(PDFName.of("T"), PDFString)
-        .decodeText(),
-    );
+      (
+        annotations.lookup(i, PDFDict).get(PDFName.of("T")) as
+          PDFString | undefined
+      )?.decodeText(),
+    ).filter((n): n is string => !!n);
     expect(names.slice(0, 13).every((n) => n.includes("_hover_"))).toBe(true);
-    expect(names.slice(13, 39).every((n) => n.includes("_panel_"))).toBe(true);
-    expect(
-      names
-        .slice(39)
-        .every(
-          (n) =>
-            n.endsWith("_close") ||
-            n.includes("_keep_") ||
-            n.includes("_exit_"),
-        ),
-    ).toBe(true);
+    expect(names.filter((n) => n.includes("_panel_"))).toHaveLength(26);
     for (const f of fields.filter((f) => f.getName().includes("_hover_"))) {
       const action = f.acroField.dict
         .lookup(PDFName.of("AA"), PDFDict)
@@ -246,24 +260,6 @@ describe("可下载的交互 PDF", () => {
       for (const other of fields.filter((x) => x.getName().includes("_hover_")))
         expect(targets.includes(other.getName())).toBe(other !== f);
     }
-    const controls = fields.filter((f) => f.getName().endsWith("_close"));
-    for (const f of fields.filter((f) => f.getName().includes("_keep_"))) {
-      expect(
-        f.acroField.dict.lookup(PDFName.of("Ff"), PDFNumber).asNumber() & 1,
-      ).toBe(1);
-      const area = f.acroField.getWidgets()[0].getRectangle();
-      for (const c of controls.filter(
-        (c) => c.getName().split("_")[1] === f.getName().split("_")[1],
-      )) {
-        const button = c.acroField.getWidgets()[0].getRectangle();
-        expect(
-          Math.min(area.x + area.width, button.x + button.width) <=
-            Math.max(area.x, button.x) ||
-            Math.min(area.y + area.height, button.y + button.height) <=
-              Math.max(area.y, button.y),
-        ).toBe(true);
-      }
-    }
     for (const f of fields) {
       const widget = f.acroField.dict;
       expect(widget.get(PDFName.of("Border"))?.toString()).toBe("[ 0 0 0 ]");
@@ -276,20 +272,9 @@ describe("可下载的交互 PDF", () => {
       const mk = widget.lookup(PDFName.of("MK"), PDFDict);
       expect(mk.get(PDFName.of("BC"))?.toString()).toBe("[ ]");
       expect(mk.get(PDFName.of("BG"))?.toString()).toBe("[ ]");
-      if (f.getName().endsWith("_close")) {
-        const ap = widget
-          .lookup(PDFName.of("AP"), PDFDict)
-          .lookup(PDFName.of("N"));
-        if (!(ap instanceof PDFRawStream))
-          throw Error("Missing button appearance");
-        expect(
-          new TextDecoder().decode(decodePDFRawStream(ap).decode()),
-        ).not.toMatch(/\bre\b/);
-      }
     }
   });
   it("每个文字片段独立在右侧就近打开，卡片统一尺寸、复用图文外观离开文字不再原生立即隐藏", async () => {
-    await fontFetch();
     const p = await fixture();
     p.annotations = [
       newAnnotation(
@@ -348,9 +333,12 @@ describe("可下载的交互 PDF", () => {
           .lookup(PDFName.of("E"), PDFDict)
           .get(PDFName.of("S"))
           ?.toString(),
-      ).toBe("/JavaScript");
+      ).toBe("/Hide");
     }
     for (const guard of fields.filter((f) => f.getName().includes("_exit_"))) {
+      expect(
+        guard.acroField.dict.lookup(PDFName.of("Ff"), PDFNumber).asNumber() & 1,
+      ).toBe(0);
       const group = guard.getName().split("_")[1];
       const area = guard.acroField.getWidgets()[0].getRectangle();
       for (const target of [...hits, ...panels].filter(
@@ -372,7 +360,6 @@ describe("可下载的交互 PDF", () => {
     }
   });
   it("原文件的表单字段和值仍然保留", async () => {
-    await fontFetch();
     const p = await fixture(),
       doc = await PDFDocument.load(
         Buffer.from(p.pdfData.split(",")[1], "base64"),
@@ -394,18 +381,14 @@ describe("可下载的交互 PDF", () => {
     );
     expect(saved.getPageCount()).toBe(1);
   });
-  it("字体加载失败可重试，视频和不支持的字符明确报错而非遗漏", async () => {
+  it("卡片生成失败可重试，视频明确报错而非遗漏", async () => {
     const p = await fixture();
     const a = newAnnotation(1, [[38, 695, 270, 725]], "项目", "text");
     p.annotations = [a];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
-    );
-    await expect(buildInteractivePdf(p)).rejects.toThrow("字体下载失败");
-    await fontFetch();
-    a.body = "不能静默丢失🦄";
-    await expect(buildInteractivePdf(p)).rejects.toThrow("🦄");
+    const { renderPdfCards } = await import("../lib/pdf-card-render");
+    vi.mocked(renderPdfCards).mockRejectedValueOnce(Error("注释卡片生成失败"));
+    await expect(buildInteractivePdf(p)).rejects.toThrow("注释卡片生成失败");
+    expect((await buildInteractivePdf(p)).pages).toBe(1);
     a.media = [
       {
         id: "video",
