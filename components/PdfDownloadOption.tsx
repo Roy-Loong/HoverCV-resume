@@ -73,7 +73,7 @@ export default function PdfDownloadOption({ project }: { project: Project }) {
             <strong>{progress ? "正在生成悬浮 PDF" : "悬浮交互 PDF"}</strong>
             <p>
               {progress ||
-                "统一卡片，就近展开 · 悬停查看、点击固定 · 需支持表单交互"}
+                "统一卡片，就近展开 · 移入继续阅读，移出自动关闭 · 需支持表单交互"}
             </p>
           </div>
           <ArrowDownToLine size={17} />
@@ -88,7 +88,7 @@ export default function PdfDownloadOption({ project }: { project: Project }) {
         <p className="pdf-export-hint" role="status">
           PDF 已在浏览器内生成。点击上方“下载悬浮交互 PDF”保存，可通过微信发送。
           电脑悬停查看，移入卡片继续阅读；移出文字和卡片约 {HOVER_CLOSE_MS}
-          毫秒后自动关闭（不支持计时脚本的阅读器仍可能立即关闭）。 iPhone
+          毫秒后自动关闭（不支持计时脚本时，移出整个阅读区域即关闭）。 iPhone
           微信聊天直接预览不支持本文件的图文弹层；其他手机阅读器也需支持 PDF
           表单动作。
         </p>

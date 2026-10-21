@@ -92,24 +92,24 @@ try:
             assert visible_panels() == [expected], f"MouseEnter failed for fragment {ordinal+1}: {visible_panels()}"
             report["hover"] += 1
             snapshot(f"fragment-{ordinal+1}-hover")
-            # This host has no Acrobat JavaScript/timers. MouseExit must still
-            # close natively instead of leaving the card stuck open.
+            # This host has no Acrobat JavaScript/timers. Entering outside
+            # guards must close natively, without a close-button click.
             pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
-            assert not visible_panels(), "Native MouseExit fallback did not close"
+            assert not visible_panels(), "Native outside guard did not close"
             report["native_exit"] = report.get("native_exit", 0)+1
-            # In readers without JavaScript/timers, hover closes immediately.
-            # Click the word to pin its card before navigating its controls.
+            # Internal crossings must preserve the card even without timers.
+            # Also exercise click mode and image navigation.
             for mode in ["t"]:
                 pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
                 if mode=="t":
                     click(hit)
-                    pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
-                    assert visible_panels() == [group+"_t_panel_0"], "Tap must stay open after pointer exit"
+                    move(by_name[group+"_t_panel_0"][1])
+                    assert visible_panels() == [group+"_t_panel_0"], "Tap must stay open when entering the panel"
                     report["tap"] = report.get("tap", 0)+1
                     keepers=[a for name,(_,a) in by_name.items() if name.startswith(group+"_t_0_keep_")]
                     card_rect=by_name[group+"_t_panel_0"][1]["/Rect"]
                     for keeper in keepers:
-                        # The narrow pointer bridge lies outside the card and
+                        # The pointer transfer region lies outside the card and
                         # may overlap a source word's reader-expanded hit area.
                         kr=keeper["/Rect"]
                         if kr[0]<card_rect[0] or kr[1]<card_rect[1] or kr[2]>card_rect[2] or kr[3]>card_rect[3]:continue

@@ -204,6 +204,7 @@ export async function buildInteractivePdf(
     all: string[];
     h: string[][];
     t: string[][];
+    exits: string[];
     hit: string;
     controls: {
       field: PDFDict;
@@ -511,11 +512,26 @@ export async function buildInteractivePdf(
           y = anchor[3] + 6;
       }
       const rect = [x, y, x + w, y + h],
+        sourceRect = [
+          anchor[0] - 1,
+          anchor[1] - 1,
+          anchor[2] + 1,
+          anchor[3] + 1,
+        ],
+        // Protect any straight pointer path from the word into the card,
+        // including left/above/below placements and pauses in the gap.
+        readingRect = [
+          Math.max(crop.x, Math.min(sourceRect[0], rect[0]) - 3),
+          Math.max(crop.y, Math.min(sourceRect[1], rect[1]) - 3),
+          Math.min(crop.x + crop.width, Math.max(sourceRect[2], rect[2]) + 3),
+          Math.min(crop.y + crop.height, Math.max(sourceRect[3], rect[3]) + 3),
+        ],
         group: Group = {
           page,
           all: [],
           h: [],
           t: [],
+          exits: [],
           hit: `${prefix}${id}_hover_0`,
           controls: [],
         };
@@ -549,6 +565,15 @@ export async function buildInteractivePdf(
             a.title,
           );
           panel.set(PDFName.of("Ff"), doc.context.obj(65537));
+          // Readers may target the visual panel instead of its transparent
+          // keepers. It must cancel closing too, without taking input focus.
+          panel.set(
+            PDFName.of("AA"),
+            doc.context.obj({
+              E: run(`HC_enter(${id});`),
+              X: run(`HC_leave(${id},${frame});`),
+            }),
+          );
           const closeRect = [x + w - 30, y + h - 30, x + w - 8, y + h - 8];
           holes.push(closeRect);
           add(`${frame}_close`, closeRect, closeAp, "关闭注释");
@@ -584,14 +609,7 @@ export async function buildInteractivePdf(
             }
           let keepers = [rect];
           for (const hole of holes) keepers = cutOut(keepers, hole);
-          // A short bridge lets entering the card cancel its close timer.
-          if (x > anchor[2])
-            keepers.push([
-              anchor[2],
-              Math.max(y, anchor[1] - 1),
-              x,
-              Math.min(y + h, anchor[3] + 1),
-            ]);
+          keepers.push(...cutOut(cutOut([readingRect], rect), sourceRect));
           for (let k = 0; k < keepers.length; k++)
             if (keepers[k][2] > keepers[k][0] && keepers[k][3] > keepers[k][1])
               // Read-only pushbuttons still receive Enter/Exit, but cannot
@@ -602,13 +620,29 @@ export async function buildInteractivePdf(
               );
           group[mode].push(names);
         }
+      // Native closing happens outside the whole reading region, never on
+      // the internal boundary between the word, bridge and card. This also
+      // works when a reader runs Hide actions but ignores JavaScript timers.
+      const outside = cutOut(
+        [[crop.x, crop.y, crop.x + crop.width, crop.y + crop.height]],
+        readingRect,
+      );
+      for (let k = 0; k < outside.length; k++) {
+        const name = `${prefix}${id}_exit_${k}`;
+        group.exits.push(name);
+        group.all.push(name);
+        widget(page, name, outside[k], empty, true, "").set(
+          PDFName.of("Ff"),
+          doc.context.obj(65537),
+        );
+      }
       widget(
         page,
         group.hit,
-        [anchor[0] - 1, anchor[1] - 1, anchor[2] + 1, anchor[3] + 1],
+        sourceRect,
         empty,
         false,
-        `${a.title}：悬停查看，单击固定，×关闭`,
+        `${a.title}：悬停查看，移入继续阅读，移出自动关闭`,
       );
     }
   }
@@ -624,31 +658,25 @@ export async function buildInteractivePdf(
     for (let id = 0; id < groups.length; id++) {
       const group = groups[id];
       if (group.page !== page) continue;
-      const hoverNames = group.h.flat(),
-        otherHits = hitNames.filter((n) => n !== group.hit);
+      const otherHits = hitNames.filter((n) => n !== group.hit);
       const state = (frame: number, mode: Mode) =>
         run(`HC_open(${id},${frame},${mode === "t"});`);
+      const visible = (frame: number, mode: Mode) => [
+        ...group[mode][frame],
+        ...group.exits,
+      ];
       const show = (frame: number, mode: Mode) =>
         hide(
           group.all,
           true,
-          hide(group[mode][frame], false, state(frame, mode)),
+          hide(visible(frame, mode), false, state(frame, mode)),
         );
-      const leave = (frame: number) =>
-        hide(hoverNames, true, run(`HC_leave(${id},${frame});`));
+      const leave = (frame: number) => run(`HC_leave(${id},${frame});`);
       const hit = hits.find((r) => r.name === group.hit)!.field;
-      // A native-only hover needs source words after its immediate exit.
-      // Pinned cards and timed hover cards suppress underlying source words.
+      // The outside guards restore source words when the reading region is
+      // left, so covered words can stay suppressed even without scripting.
       const open = (mode: Mode) =>
-        hide(
-          pageNames,
-          true,
-          hide(
-            mode === "t" ? otherHits : hitNames,
-            mode === "t",
-            show(0, mode),
-          ),
-        );
+        hide(pageNames, true, hide(otherHits, true, show(0, mode)));
       hit.set(
         PDFName.of("AA"),
         doc.context.obj({ E: open("h"), Fo: open("t"), X: leave(0) }),
@@ -661,9 +689,9 @@ export async function buildInteractivePdf(
             // Do not hide/re-show the active card on every pointer crossing:
             // that can emit another Exit and restart closing from inside it.
             E: hide(
-              c.mode === "t" ? otherHits : hitNames,
-              c.mode === "t",
-              hide(group[c.mode][c.frame], false, state(c.frame, c.mode)),
+              otherHits,
+              true,
+              hide(visible(c.frame, c.mode), false, state(c.frame, c.mode)),
             ),
             X: c.mode === "h" ? leave(c.frame) : run("HC_keep();"),
           }),
@@ -686,7 +714,7 @@ export async function buildInteractivePdf(
             PDFName.of("Next"),
             doc.context.obj({
               S: "Hide",
-              T: group[c.mode][c.target].map((n) => PDFString.of(n)),
+              T: visible(c.target, c.mode).map((n) => PDFString.of(n)),
               H: false,
               Next: run(
                 `HC_open(${id},${c.target},${c.mode === "t"});try{this.getField(${JSON.stringify(focusName)}).setFocus();}catch(e){}`,
@@ -695,6 +723,19 @@ export async function buildInteractivePdf(
           );
           c.field.set(PDFName.of("A"), action);
         }
+      }
+      for (const name of group.exits) {
+        const field = records.find((r) => r.name === name)!.field;
+        field.set(
+          PDFName.of("AA"),
+          doc.context.obj({
+            E: hide(
+              pageNames,
+              true,
+              hide(hitNames, false, run(`HC_outside(${id});`)),
+            ),
+          }),
+        );
       }
     }
     const annots = page.node.Annots();
@@ -705,6 +746,7 @@ export async function buildInteractivePdf(
       const anchors: PDFRef[] = [],
         panels: PDFRef[] = [],
         controls: PDFRef[] = [],
+        exits: PDFRef[] = [],
         original: PDFRef[] = [];
       for (let n = 0; n < annots.size(); n++) {
         const ref = annots.get(n) as PDFRef,
@@ -719,13 +761,21 @@ export async function buildInteractivePdf(
             ? anchors
             : name.includes("_panel_")
               ? panels
-              : controls
+              : name.includes("_exit_")
+                ? exits
+                : controls
           : original
         ).push(ref);
       }
       page.node.set(
         PDFName.of("Annots"),
-        doc.context.obj([...original, ...anchors, ...panels, ...controls]),
+        doc.context.obj([
+          ...original,
+          ...anchors,
+          ...panels,
+          ...controls,
+          ...exits,
+        ]),
       );
     }
     if (pageNames.length) {
@@ -758,7 +808,8 @@ export async function buildInteractivePdf(
   const originalFields: PDFRef[] = [],
     anchorFields: PDFRef[] = [],
     panelFields: PDFRef[] = [],
-    controlFields: PDFRef[] = [];
+    controlFields: PDFRef[] = [],
+    exitFields: PDFRef[] = [];
   for (let i = 0; i < fields.size(); i++) {
     const ref = fields.get(i) as PDFRef,
       field = doc.context.lookup(ref, PDFDict),
@@ -772,7 +823,9 @@ export async function buildInteractivePdf(
         ? anchorFields
         : name.includes("_panel_")
           ? panelFields
-          : controlFields
+          : name.includes("_exit_")
+            ? exitFields
+            : controlFields
       : originalFields
     ).push(ref);
   }
@@ -783,12 +836,14 @@ export async function buildInteractivePdf(
       ...anchorFields,
       ...panelFields,
       ...controlFields,
+      ...exitFields,
     ]),
   );
   const runtime = pdfHoverRuntime({
     groups: groups.map((g) => ({
       hover: g.h,
       pinned: g.t,
+      exits: g.exits,
       hit: g.hit,
       page: originals.indexOf(g.page),
     })),

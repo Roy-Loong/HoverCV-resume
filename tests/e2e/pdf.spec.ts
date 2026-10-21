@@ -2,10 +2,12 @@ import { test, expect } from "@playwright/test";
 import { readFile, mkdir } from "node:fs/promises";
 import { PDFDocument, PDFDict, PDFName, PDFRawStream } from "pdf-lib";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { checkNativePdfTransfer } from "./pdf-native-helper";
 
 test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF", async ({
   page,
   context,
+  browser,
 }) => {
   test.setTimeout(90000);
   const requests: { method: string; url: string }[] = [];
@@ -141,4 +143,6 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   expect(ratio).toBeGreaterThan(0.8);
   expect(ratio).toBeLessThan(1.3);
   await reader.close();
+  await checkNativePdfTransfer(browser, bytes, false);
+  await checkNativePdfTransfer(browser, bytes, true);
 });

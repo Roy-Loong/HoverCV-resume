@@ -223,7 +223,12 @@ describe("可下载的交互 PDF", () => {
     expect(
       names
         .slice(39)
-        .every((n) => n.endsWith("_close") || n.includes("_keep_")),
+        .every(
+          (n) =>
+            n.endsWith("_close") ||
+            n.includes("_keep_") ||
+            n.includes("_exit_"),
+        ),
     ).toBe(true);
     for (const f of fields.filter((f) => f.getName().includes("_hover_"))) {
       const action = f.acroField.dict
@@ -283,7 +288,7 @@ describe("可下载的交互 PDF", () => {
       }
     }
   });
-  it("每个文字片段独立在右侧就近打开，卡片统一尺寸、复用图文外观并具备原生退出动作", async () => {
+  it("每个文字片段独立在右侧就近打开，卡片统一尺寸、复用图文外观离开文字不再原生立即隐藏", async () => {
     await fontFetch();
     const p = await fixture();
     p.annotations = [
@@ -327,11 +332,43 @@ describe("可下载的交互 PDF", () => {
     for (const hit of hits) {
       const actions = hit.acroField.dict.lookup(PDFName.of("AA"), PDFDict),
         exit = actions.lookup(PDFName.of("X"), PDFDict);
-      expect(exit.lookup(PDFName.of("S"), PDFName).asString()).toBe("/Hide");
-      expect(exit.lookup(PDFName.of("H"))?.toString()).toBe("true");
+      expect(exit.lookup(PDFName.of("S"), PDFName).asString()).toBe(
+        "/JavaScript",
+      );
+      expect(exit.get(PDFName.of("H"))).toBeUndefined();
       expect(hit.acroField.dict.get(PDFName.of("A"))?.toString()).not.toBe(
         actions.get(PDFName.of("E"))?.toString(),
       );
+    }
+    for (const panel of panels) {
+      const actions = panel.acroField.dict.lookup(PDFName.of("AA"), PDFDict);
+      // Some readers target the visual panel rather than transparent keepers.
+      expect(
+        actions
+          .lookup(PDFName.of("E"), PDFDict)
+          .get(PDFName.of("S"))
+          ?.toString(),
+      ).toBe("/JavaScript");
+    }
+    for (const guard of fields.filter((f) => f.getName().includes("_exit_"))) {
+      const group = guard.getName().split("_")[1];
+      const area = guard.acroField.getWidgets()[0].getRectangle();
+      for (const target of [...hits, ...panels].filter(
+        (f) => f.getName().split("_")[1] === group,
+      )) {
+        const r = target.acroField.getWidgets()[0].getRectangle();
+        expect(
+          Math.min(area.x + area.width, r.x + r.width) <=
+            Math.max(area.x, r.x) ||
+            Math.min(area.y + area.height, r.y + r.height) <=
+              Math.max(area.y, r.y),
+        ).toBe(true);
+      }
+      const enter = guard.acroField.dict
+        .lookup(PDFName.of("AA"), PDFDict)
+        .lookup(PDFName.of("E"), PDFDict);
+      expect(enter.get(PDFName.of("S"))?.toString()).toBe("/Hide");
+      expect(enter.get(PDFName.of("H"))?.toString()).toBe("true");
     }
   });
   it("原文件的表单字段和值仍然保留", async () => {
