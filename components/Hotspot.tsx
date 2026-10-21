@@ -24,6 +24,7 @@ import {
 import type { Annotation } from "@/lib/schema";
 import ImageFrame from "./ImageFrame";
 import { HOVER_OPEN_MS, HOVER_CLOSE_MS, SLIDESHOW_MS } from "@/lib/reader";
+import { HOVER_CARD_WIDTH, HOVER_CARD_HEIGHT } from "@/lib/card-layout";
 export default function Hotspot({
   annotation: a,
   style,
@@ -62,7 +63,7 @@ export default function Hotspot({
       size({
         padding: 12,
         apply({ availableHeight, elements }) {
-          elements.floating.style.maxHeight = `${Math.min(420, availableHeight)}px`;
+          elements.floating.style.maxHeight = `${Math.min(HOVER_CARD_HEIGHT, availableHeight)}px`;
         },
       }),
     ],
@@ -190,7 +191,11 @@ export default function Hotspot({
             })}
             role="dialog"
             aria-label={a.title}
-            style={floatingStyles}
+            style={{
+              ...floatingStyles,
+              width: HOVER_CARD_WIDTH,
+              height: HOVER_CARD_HEIGHT,
+            }}
             className={`hover-card template-${a.template}`}
           >
             <div className="card-topline" style={{ background: a.color }} />

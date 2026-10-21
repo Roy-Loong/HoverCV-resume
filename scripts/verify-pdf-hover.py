@@ -3,6 +3,8 @@
 Requires: pip install pypdfium2 pypdf
 Usage: python scripts/verify-pdf-hover.py FILE.pdf [--snapshots PRIVATE_DIR]
 This checks native PDF events, not a replacement web viewer or WeChat.
+PDFium's bare form-event API also dispatches input to hidden source widgets.
+Covered-source body clicks are reported as unverified, not counted as passes.
 """
 import argparse
 import ctypes
@@ -68,6 +70,17 @@ try:
         def snapshot(label):
             if args.snapshots:
                 page.render(scale=1.5, may_draw_forms=True).to_pil().save(args.snapshots / f"page-{page_index+1}-{label}.png")
+        def focused_name():
+            page_number=ctypes.c_int(-1)
+            focused=pdfium.raw.FPDF_ANNOTATION()
+            found=pdfium.raw.FORM_GetFocusedAnnot(doc.formenv,ctypes.byref(page_number),ctypes.byref(focused))
+            if not found or not focused:return ""
+            try:
+                length=pdfium.raw.FPDFAnnot_GetStringValue(focused,b"T",None,0)
+                buffer=(ctypes.c_ushort*((length+1)//2))()
+                pdfium.raw.FPDFAnnot_GetStringValue(focused,b"T",buffer,length)
+                return bytes(buffer)[:length].decode("utf-16-le").rstrip("\0")
+            finally:pdfium.raw.FPDFPage_CloseAnnot(focused)
         assert not visible_panels(), "Cards must start hidden"
         snapshot("idle")
         for ordinal, (group, hits) in enumerate(groups.items()):
@@ -93,6 +106,39 @@ try:
                     pdfium.raw.FORM_OnMouseMove(doc.formenv, page, 0, 2, 2)
                     assert visible_panels() == [group+"_t_panel_0"], "Tap must stay open after pointer exit"
                     report["tap"] = report.get("tap", 0)+1
+                    keepers=[a for name,(_,a) in by_name.items() if name.startswith(group+"_t_0_keep_")]
+                    card_rect=by_name[group+"_t_panel_0"][1]["/Rect"]
+                    for keeper in keepers:
+                        # The narrow pointer bridge lies outside the card and
+                        # may overlap a source word's reader-expanded hit area.
+                        kr=keeper["/Rect"]
+                        if kr[0]<card_rect[0] or kr[1]<card_rect[1] or kr[2]>card_rect[2] or kr[3]>card_rect[3]:continue
+                        assert int(keeper["/Ff"])&1, "Transparent hover areas must be read-only"
+                        assert list(keeper["/Border"])==[0,0,0], "Transparent hover area has a border"
+                        # FORM_OnMouseMove in the bare PDFium host dispatches
+                        # Enter even to widgets with F=Hidden (also reproducible
+                        # with a single initially hidden button). A full reader
+                        # must filter those inputs. Do not mistake that host
+                        # limitation for verified WPS/Acrobat overlap handling.
+                        px,py=point(keeper)
+                        covered=[]
+                        for other_group,other_hits in groups.items():
+                            if other_group==group:continue
+                            for index,other in other_hits:
+                                hr=other["/Rect"]
+                                if hr[0]<=px<=hr[2] and hr[1]<=py<=hr[3]:
+                                    native=pdfium.raw.FPDFPage_GetAnnot(page,index)
+                                    flags=pdfium.raw.FPDFAnnot_GetFlags(native)
+                                    pdfium.raw.FPDFPage_CloseAnnot(native)
+                                    assert flags&pdfium.raw.FPDF_ANNOT_FLAG_HIDDEN, "Pinned card left a covered source widget visible"
+                                    covered.append(other)
+                        if covered:
+                            report["hidden_input_cases_unverified"]=report.get("hidden_input_cases_unverified",0)+1
+                            continue
+                        click(keeper)
+                        assert "_keep_" not in focused_name(), "Clicking the card body focused a large invisible field"
+                        assert visible_panels() == [group+"_t_panel_0"], f"Read-only body region {keeper['/T']} lost card: {visible_panels()}"
+                        report["body_without_focus"] = report.get("body_without_focus",0)+1
                 else:move(hit)
                 for frame in range(1, len(panels)):
                     click(by_name[f"{group}_{mode}_{frame-1}_next"][1])

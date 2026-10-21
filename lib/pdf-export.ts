@@ -25,6 +25,7 @@ import {
 } from "./schema";
 import { imageLayout } from "./media-layout";
 import { pdfHoverRuntime } from "./pdf-hover-runtime";
+import { PDF_CARD_WIDTH, PDF_CARD_HEIGHT } from "./card-layout";
 
 export type PdfProgress = (message: string) => void;
 const ACCENT = "#6099a9",
@@ -143,7 +144,7 @@ async function photoBytes(media: Media, signal?: AbortSignal) {
   }
 }
 
-/** Original-page PDF with native MouseEnter/Hide form actions, like the user's sample. */
+/** Original-page PDF with native hover/click actions and the web card's size. */
 export async function buildInteractivePdf(
   input: Project,
   progress: PdfProgress = () => {},
@@ -260,7 +261,9 @@ export async function buildInteractivePdf(
       Rect: rect,
       F: hidden ? 2 : 0,
       H: "N",
+      Border: [0, 0, 0],
       BS: { W: 0 },
+      MK: { BC: [], BG: [] },
       AP: { N: appearance },
       P: page.ref,
     });
@@ -303,15 +306,6 @@ export async function buildInteractivePdf(
   }
   async function buttonAppearance(label: string, w: number, h: number) {
     return appearance(w, h, (page) => {
-      page.drawRectangle({
-        x: 0.5,
-        y: 0.5,
-        width: w - 1,
-        height: h - 1,
-        color: color("#f2f7fc"),
-        borderColor: color("#c5d8ed"),
-        borderWidth: 0.6,
-      });
       drawText(
         page,
         label,
@@ -390,8 +384,18 @@ export async function buildInteractivePdf(
   }
   // One document-wide size, including mixed page sizes. Never move a card to
   // a distant page corner just to avoid another annotation.
-  const w = Math.min(260, ...originals.map((p) => p.getCropBox().width - 16)),
-    h = Math.min(360, ...originals.map((p) => p.getCropBox().height - 16));
+  const cardScale = Math.min(
+    1,
+    ...originals.flatMap((page) => {
+      const crop = page.getCropBox();
+      return [
+        (crop.width - 16) / PDF_CARD_WIDTH,
+        (crop.height - 16) / PDF_CARD_HEIGHT,
+      ];
+    }),
+  );
+  const w = PDF_CARD_WIDTH * cardScale,
+    h = PDF_CARD_HEIGHT * cardScale;
   if (w < 130 || h < 160)
     throw Error("这份 PDF 页面过小，无法放置可阅读的悬浮卡片。");
   const closeAp = await buttonAppearance("×", 22, 22),
@@ -591,7 +595,12 @@ export async function buildInteractivePdf(
             ]);
           for (let k = 0; k < keepers.length; k++)
             if (keepers[k][2] > keepers[k][0] && keepers[k][3] > keepers[k][1])
-              add(`${frame}_keep_${k}`, keepers[k], empty, "");
+              // Read-only pushbuttons still receive Enter/Exit, but cannot
+              // take input focus and draw a reader's rectangle over the title.
+              add(`${frame}_keep_${k}`, keepers[k], empty, "").set(
+                PDFName.of("Ff"),
+                doc.context.obj(65537),
+              );
           group[mode].push(names);
         }
       widget(
@@ -627,14 +636,21 @@ export async function buildInteractivePdf(
           hide(group[mode][frame], false, state(frame, mode)),
         );
       const leave = (frame: number) =>
-        hide(
-          hoverNames,
-          true,
-          hide(hitNames, false, run(`HC_leave(${id},${frame});`)),
-        );
+        hide(hoverNames, true, run(`HC_leave(${id},${frame});`));
       const hit = hits.find((r) => r.name === group.hit)!.field;
+      // Native-only hover leaves source words available after immediate
+      // closing. Pinned cards disable covered words until × is pressed, so a
+      // read-only card body cannot click through into a different annotation.
       const open = (mode: Mode) =>
-        hide(pageNames, true, hide(otherHits, true, show(0, mode)));
+        hide(
+          pageNames,
+          true,
+          hide(
+            mode === "t" ? otherHits : hitNames,
+            mode === "t",
+            show(0, mode),
+          ),
+        );
       hit.set(
         PDFName.of("AA"),
         doc.context.obj({ E: open("h"), Fo: open("t"), X: leave(0) }),
@@ -644,7 +660,10 @@ export async function buildInteractivePdf(
         c.field.set(
           PDFName.of("AA"),
           doc.context.obj({
-            E: hide(otherHits, true, show(c.frame, c.mode)),
+            E:
+              c.mode === "t"
+                ? hide(otherHits, true, show(c.frame, c.mode))
+                : show(c.frame, c.mode),
             X: c.mode === "h" ? leave(c.frame) : run("HC_keep();"),
           }),
         );

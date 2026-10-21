@@ -16,6 +16,12 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
   await expect(page.locator(".save-status")).toContainText("已保存至本地");
+  await page.locator(".hotspot").first().hover();
+  await expect(page.locator(".hover-card")).toBeVisible();
+  const webCard = (await page.locator(".hover-card").boundingBox())!;
+  expect(webCard.width).toBe(360);
+  expect(webCard.height).toBe(420);
+  await page.keyboard.press("Escape");
   await page.locator("#title").fill("中文图文下载测试");
   await page.locator("#body").fill("图片位置和缩放保留，悬停查看图文。♥囍");
   await expect(page.locator(".save-status")).toContainText("已保存至本地");
@@ -65,11 +71,14 @@ test("PDF 生成失败可重试，明确点击即可保存原页数的悬浮 PDF
     await task.destroy();
   }
   const panel = fields.find((f) => f.getName().includes("_0_h_panel_0"))!;
+  const cardRect = panel.acroField.getWidgets()[0].getRectangle();
+  expect((cardRect.width * 96) / 72).toBeCloseTo(webCard.width, 2);
+  expect((cardRect.height * 96) / 72).toBeCloseTo(webCard.height, 2);
   const ap = panel.acroField.dict.lookup(PDFName.of("AP"), PDFDict),
     ref = ap.get(PDFName.of("N"))!;
   const stream = saved.context.lookup(ref);
   if (!(stream instanceof PDFRawStream)) throw Error("Missing card appearance");
-  const preview = saved.addPage([260, 360]);
+  const preview = saved.addPage([270, 315]);
   preview.node.set(
     PDFName.of("Resources"),
     stream.dict.get(PDFName.of("Resources"))!,

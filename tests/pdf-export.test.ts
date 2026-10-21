@@ -7,8 +7,14 @@ import {
   PDFNumber,
   PDFString,
   PDFRawStream,
+  decodePDFRawStream,
   StandardFonts,
 } from "pdf-lib";
+import {
+  HOVER_CARD_WIDTH,
+  HOVER_CARD_HEIGHT,
+  CSS_PIXEL_IN_PDF_POINTS,
+} from "../lib/card-layout";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import {
   buildInteractivePdf,
@@ -147,7 +153,7 @@ describe("可下载的交互 PDF", () => {
       const appearance = f.acroField.dict.lookup(PDFName.of("AP"), PDFDict),
         ref = appearance.get(PDFName.of("N"))!;
       const stream = doc.context.lookup(ref),
-        page = doc.addPage([260, 360]);
+        page = doc.addPage([270, 315]);
       if (!(stream instanceof PDFRawStream))
         throw Error("Missing appearance stream");
       page.node.set(
@@ -170,7 +176,7 @@ describe("可下载的交互 PDF", () => {
         const content = await (await pdf.getPage(i)).getTextContent();
         text += content.items
           .filter(
-            (x) => "str" in x && x.transform[5] > 47 && x.transform[5] < 310,
+            (x) => "str" in x && x.transform[5] > 47 && x.transform[5] < 265,
           )
           .map((x) => ("str" in x ? x.str : ""))
           .join("");
@@ -226,9 +232,20 @@ describe("可下载的交互 PDF", () => {
       expect(action.get(PDFName.of("T"))?.toString().split("HC").length).toBe(
         fields.filter((f) => !f.getName().includes("_hover_")).length + 1,
       );
+      // A pinned card must suppress every other source word underneath it.
+      const suppress = f.acroField.dict
+        .lookup(PDFName.of("A"), PDFDict)
+        .lookup(PDFName.of("Next"), PDFDict);
+      expect(suppress.get(PDFName.of("H"))?.toString()).toBe("true");
+      const targets = suppress.get(PDFName.of("T"))!.toString();
+      for (const other of fields.filter((x) => x.getName().includes("_hover_")))
+        expect(targets.includes(other.getName())).toBe(other !== f);
     }
     const controls = fields.filter((f) => f.getName().endsWith("_close"));
     for (const f of fields.filter((f) => f.getName().includes("_keep_"))) {
+      expect(
+        f.acroField.dict.lookup(PDFName.of("Ff"), PDFNumber).asNumber() & 1,
+      ).toBe(1);
       const area = f.acroField.getWidgets()[0].getRectangle();
       for (const c of controls.filter(
         (c) => c.getName().split("_")[1] === f.getName().split("_")[1],
@@ -240,6 +257,29 @@ describe("可下载的交互 PDF", () => {
             Math.min(area.y + area.height, button.y + button.height) <=
               Math.max(area.y, button.y),
         ).toBe(true);
+      }
+    }
+    for (const f of fields) {
+      const widget = f.acroField.dict;
+      expect(widget.get(PDFName.of("Border"))?.toString()).toBe("[ 0 0 0 ]");
+      expect(
+        widget
+          .lookup(PDFName.of("BS"), PDFDict)
+          .lookup(PDFName.of("W"), PDFNumber)
+          .asNumber(),
+      ).toBe(0);
+      const mk = widget.lookup(PDFName.of("MK"), PDFDict);
+      expect(mk.get(PDFName.of("BC"))?.toString()).toBe("[ ]");
+      expect(mk.get(PDFName.of("BG"))?.toString()).toBe("[ ]");
+      if (f.getName().endsWith("_close")) {
+        const ap = widget
+          .lookup(PDFName.of("AP"), PDFDict)
+          .lookup(PDFName.of("N"));
+        if (!(ap instanceof PDFRawStream))
+          throw Error("Missing button appearance");
+        expect(
+          new TextDecoder().decode(decodePDFRawStream(ap).decode()),
+        ).not.toMatch(/\bre\b/);
       }
     }
   });
@@ -264,11 +304,14 @@ describe("可下载的交互 PDF", () => {
       panels = fields.filter((f) => f.getName().includes("_h_panel_"));
     expect(hits).toHaveLength(2);
     expect(panels).toHaveLength(2);
+    const rect = panels[0].acroField.getWidgets()[0].getRectangle();
+    expect(rect.width / CSS_PIXEL_IN_PDF_POINTS).toBe(HOVER_CARD_WIDTH);
+    expect(rect.height / CSS_PIXEL_IN_PDF_POINTS).toBe(HOVER_CARD_HEIGHT);
     expect(
       panels.map((f) => f.acroField.getWidgets()[0].getRectangle()),
     ).toEqual([
-      { x: 156, y: 354, width: 260, height: 360 },
-      { x: 181, y: 84, width: 260, height: 360 },
+      { x: 156, y: 399, width: 270, height: 315 },
+      { x: 181, y: 129, width: 270, height: 315 },
     ]);
     expect(
       panels[0].acroField.dict

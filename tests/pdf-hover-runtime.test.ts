@@ -52,6 +52,7 @@ describe("PDF 悬停与点击状态", () => {
   it("没有文档初始化也可由事件引导启动，149 ms 保持、150 ms 关闭并恢复词语触发区", () => {
     const r = runtime();
     r.open();
+    expect(r.fields.get("other")!.display).toBe(1);
     r.exit();
     vi.advanceTimersByTime(149);
     expect(r.fields.get("h0")!.display).toBe(2);

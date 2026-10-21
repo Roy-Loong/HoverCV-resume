@@ -13,7 +13,7 @@ function HC_keep(){if(HC_timer!==null){try{app.clearTimeOut(HC_timer);}catch(e){
 function HC_display(names,value){for(var i=0;i<names.length;i++){try{var f=HC_doc.getField(names[i]);if(f)f.display=value;}catch(e){}}}
 function HC_hits(page,except){for(var i=0;i<HC_groups.length;i++){var g=HC_groups[i];if(g.page===page)HC_display([g.hit],i===except?display.noPrint:display.hidden);}}
 function HC_hide(){HC_keep();for(var i=0;i<HC_groups.length;i++){var g=HC_groups[i];for(var j=0;j<g.hover.length;j++){HC_display(g.hover[j],display.hidden);HC_display(g.pinned[j],display.hidden);}HC_display([g.hit],display.noPrint);}HC_active=-1;HC_pinned=false;}
-function HC_open(id,frame,pinned){HC_keep();HC_active=id;HC_frame=frame;HC_pinned=pinned;}
+function HC_open(id,frame,pinned){HC_keep();HC_active=id;HC_frame=frame;HC_pinned=pinned;HC_hits(HC_groups[id].page,id);}
 function HC_leave(id,frame){
 if(HC_active!==id)return;
 if(HC_pinned){HC_hits(HC_groups[id].page,id);return;}
